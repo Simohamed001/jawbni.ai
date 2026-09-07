@@ -2,13 +2,18 @@ import { prisma } from "@/lib/prisma";
 import { getReviewCategory } from "@/lib/categories";
 import {
   buildSystemPrompt,
+  buildVoiceSystemPrompt,
   classificationSchema,
   matchCategoryId,
   type MerchantContext,
 } from "@/lib/ai/prompt";
 import { UNDEFINED_LABEL } from "@/lib/utils";
-import { classifyLocal } from "@/lib/ai/local-ai";
-import { transcribeAudio } from "@/lib/ai/transcribe";
+import {
+  getGeminiClient,
+  recordRequest,
+  getCurrentModel,
+} from "@/lib/ai/gemini-rotation";
+import { transcribeAudio, generateFromVoicePrompt } from "@/lib/ai/transcribe";
 import { classificationCache, audioCache } from "@/lib/ai/cache";
 
 export { transcribeAudio };
@@ -220,45 +225,39 @@ export async function classifyMessage(merchantId: string, messageText: string) {
       classificationCache.set(messageText, merchantId, result);
       return result;
     }
-    
-    try {
-      console.log("[Text Classification] Attempting local AI classification for:", messageText.substring(0, 100));
-      const result = await classifyLocal(systemPrompt);
-      rawAiResponse = result.text;
-      console.log("[Text Classification] FULL Local AI response:", rawAiResponse);
-      console.log("[Text Classification] Local AI response JSON parsed:", result.json);
 
-      if (result.json) {
+    try {
+      console.log("[Text Classification] Attempting Gemini classification for:", messageText.substring(0, 100));
+      const model = getGeminiClient();
+      recordRequest(getCurrentModel());
+      const result = await model.generateContent(systemPrompt);
+      const raw = result.response.text();
+      rawAiResponse = raw;
+      console.log("[Text Classification] FULL Gemini raw response:", rawAiResponse);
+      console.log("[Text Classification] Gemini raw response parsed JSON:", extractJsonObject(rawAiResponse));
+
+      const json = extractJsonObject(rawAiResponse);
+      if (json) {
         parsed = classificationSchema.parse({
           mainCategory:
-            typeof result.json.mainCategory === "string"
-              ? result.json.mainCategory
+            typeof json.mainCategory === "string"
+              ? json.mainCategory
               : reviewCategory.name,
           subCategory:
-            typeof result.json.subCategory === "string"
-              ? result.json.subCategory
+            typeof json.subCategory === "string"
+              ? json.subCategory
               : UNDEFINED_LABEL,
           product:
-            typeof result.json.product === "string"
-              ? result.json.product
+            typeof json.product === "string"
+              ? json.product
               : UNDEFINED_LABEL,
         });
-        console.log("[Text Classification] Successfully parsed local AI classification:", parsed);
-      } else if (rawAiResponse) {
-        // Fallback: استخراج JSON من النص الخام إن لم يعدّده السيرفر
-        const jsonMatch = rawAiResponse.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const json = JSON.parse(jsonMatch[0]);
-          parsed = classificationSchema.parse(json);
-          console.log("[Text Classification] Successfully parsed JSON from raw response:", parsed);
-        } else {
-          console.warn("[Text Classification] No JSON found in local AI response");
-        }
+        console.log("[Text Classification] Successfully parsed Gemini classification:", parsed);
       } else {
-        console.warn("[Text Classification] Empty local AI response");
+        console.warn("[Text Classification] No JSON found in Gemini response");
       }
     } catch (error) {
-      console.error("[Text Classification] Local AI classification error:", error);
+      console.error("[Text Classification] Gemini classification error:", error);
       console.log("[Text Classification] Falling back to simple category matching (no product keyword matching)");
       // Fallback to simple category matching only (no product keyword matching to avoid misclassification)
       const fallbackCategory = simpleCategoryFallback(lower);
@@ -297,7 +296,7 @@ export async function classifyMessage(merchantId: string, messageText: string) {
     console.log("[Text Classification] Empty message text, using review category");
   }
 
-  let result = mapParsedClassification(parsed, ctx, reviewCategory, rawAiResponse);
+let result = mapParsedClassification(parsed, ctx, reviewCategory, rawAiResponse);
   const returnsCategory = ctx.mainCategories.find((category) => category.name === "المرتجعات");
   if (returnsCategory && /رجع|ارجاع|إرجاع|مرتجع|استبدال|nrj3|nرجع|return|retour/i.test(messageText)) {
     result = {
@@ -308,10 +307,10 @@ export async function classifyMessage(merchantId: string, messageText: string) {
       subCategoryName: UNDEFINED_LABEL,
     };
   }
-  
+
   // Cache the result
   classificationCache.set(messageText, merchantId, result);
-  
+
   return result;
 }
 
@@ -374,10 +373,45 @@ export async function classifyVoiceMessage(
 
   const ctx = await loadMerchantContext(merchantId);
   const reviewCategory = await getReviewCategory(merchantId);
+  const formattedProducts = formatProducts(ctx.products);
+  const voicePrompt = buildVoiceSystemPrompt(ctx, formattedProducts);
 
-  console.log("[Voice Classification] Transcribing voice message with local Whisper");
+  console.log("[Voice Classification] Attempting direct Gemini voice classification");
 
-  // Whisper-Large-v3-Turbo: الصوت → نص
+  // محاولة التصنيف الصوتي المباشر (Gemini يسمع ويصنّف في خطوة واحدة)
+  try {
+    const voiceResult = await generateFromVoicePrompt(audioFilePath, voicePrompt);
+    const json = voiceResult.json;
+    const transcription = json && typeof json.transcription === "string" ? json.transcription : null;
+    const parsedTranscription = transcription ? normalizeTranscriptForVoice(transcription) : null;
+
+    const parsed = json
+      ? {
+          mainCategory:
+            typeof json.mainCategory === "string" ? json.mainCategory : reviewCategory.name,
+          subCategory:
+            typeof json.subCategory === "string" ? json.subCategory : UNDEFINED_LABEL,
+          product:
+            typeof json.product === "string" ? json.product : UNDEFINED_LABEL,
+        }
+      : null;
+
+    if (parsed && parsedTranscription) {
+      console.log("[Voice Classification] Direct voice classification succeeded:", parsed);
+      const classification = mapParsedClassification(parsed, ctx, reviewCategory, voiceResult.raw);
+      classificationCache.set(parsedTranscription, merchantId, classification);
+      audioCache.set(audioFilePath, merchantId, parsedTranscription, classification);
+      return {
+        transcription: parsedTranscription,
+        classification,
+      };
+    }
+  } catch (voiceError) {
+    console.error("[Voice Classification] Direct voice classification failed:", voiceError);
+  }
+
+  // Fallback: تصنيف عبر تفريغ صوتي ثم تصنيف نصي
+  console.log("[Voice Classification] Transcribing voice message with Gemini");
   const transcription = await transcribeAudio(audioFilePath);
   console.log("[Voice Classification] Transcription result:", {
     hasTranscription: !!transcription,
@@ -391,10 +425,10 @@ export async function classifyVoiceMessage(
     return { transcription: null, classification };
   }
 
-  // Qwen2.5-7B: تصنيف النص المفرّغ (يستعمل cache تلقائياً)
-  console.log("[Voice Classification] Classifying transcribed text with local AI");
+  // تصنيف النص المفرّغ (يستعمل cache تلقائياً)
+  console.log("[Voice Classification] Classifying transcribed text with Gemini");
   let classification = await classifyMessage(merchantId, transcription);
-  console.log("[Voice Classification] AI text classification result:", {
+  console.log("[Voice Classification] Gemini text classification result:", {
     mainCategory: classification.mainCategoryName,
     subCategory: classification.subCategoryName,
     productName: classification.productName,
@@ -419,4 +453,24 @@ export async function classifyVoiceMessage(
   audioCache.set(audioFilePath, merchantId, transcription, classification);
 
   return { transcription, classification };
+}
+
+function extractJsonObject(text: string): Record<string, unknown> | null {
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[0]) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeTranscriptForVoice(text: string): string | null {
+  const cleaned = text
+    .replace(/^```[\w]*\n?|\n?```$/g, "")
+    .replace(/^["«»]|["«»]$/g, "")
+    .trim();
+  if (!cleaned) return null;
+  if (/^🎤?\s*رسالة صوتية/.test(cleaned)) return null;
+  return cleaned;
 }
