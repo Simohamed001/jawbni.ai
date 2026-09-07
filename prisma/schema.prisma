@@ -1,0 +1,185 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum MessageType {
+  text
+  voice
+}
+
+enum MessageSource {
+  demo
+  manual
+}
+
+enum MessageStatus {
+  pending
+  classified
+  replied
+}
+
+model User {
+  id           String           @id @default(cuid())
+  email        String           @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  merchant     MerchantProfile?
+}
+
+model MerchantProfile {
+  id             String          @id @default(cuid())
+  userId         String          @unique
+  shopName       String
+  locale         String          @default("ar")
+  singleProduct  Boolean         @default(false)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mainCategories MainCategory[]
+  subCategories  SubCategory[]
+  products       Product[]
+  messages       Message[]
+  groupReplies   GroupReply[]
+}
+
+model MainCategory {
+  id              String           @id @default(cuid())
+  merchantId      String
+  name            String
+  description     String?
+  isSystem        Boolean          @default(false)
+  sortOrder       Int              @default(0)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  merchant        MerchantProfile  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  subCategories   SubCategory[]
+  classifications Classification[]
+  additionalClassifications AdditionalClassification[]
+  groupReplies    GroupReply[]
+  categoryMappings ProductCategoryMapping[]
+
+  @@unique([merchantId, name])
+}
+
+model SubCategory {
+  id              String           @id @default(cuid())
+  merchantId      String
+  mainCategoryId  String?
+  name            String
+  description     String?
+  sortOrder       Int              @default(0)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  merchant        MerchantProfile  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  mainCategory    MainCategory?    @relation(fields: [mainCategoryId], references: [id], onDelete: SetNull)
+  classifications Classification[]
+  additionalClassifications AdditionalClassification[]
+  groupReplies    GroupReply[]
+  categoryMappings ProductCategoryMapping[]
+
+  @@unique([merchantId, name, mainCategoryId])
+}
+
+model Product {
+  id           String          @id @default(cuid())
+  merchantId   String
+  officialName String
+  keywords     String          @default("[]")
+  isSold       Boolean         @default(true)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  merchant     MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  groupReplies GroupReply[]
+  categoryMappings ProductCategoryMapping[]
+
+  @@unique([merchantId, officialName])
+}
+
+model ProductCategoryMapping {
+  id              String       @id @default(cuid())
+  productId       String
+  mainCategoryId  String
+  subCategoryId   String?
+  priority        Int          @default(0)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  product         Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  mainCategory    MainCategory @relation(fields: [mainCategoryId], references: [id], onDelete: Cascade)
+  subCategory     SubCategory? @relation(fields: [subCategoryId], references: [id], onDelete: SetNull)
+
+  @@unique([productId, mainCategoryId, subCategoryId])
+}
+
+model Message {
+  id            String          @id @default(cuid())
+  merchantId    String
+  customerName  String
+  body          String
+  messageType   MessageType     @default(text)
+  audioPath     String?
+  transcription String?
+  source        MessageSource   @default(manual)
+  status        MessageStatus   @default(pending)
+  receivedAt    DateTime        @default(now())
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  merchant      MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  additionalClassifications String?
+  classification Classification?
+  additionalClassificationRecords AdditionalClassification[]
+}
+
+model Classification {
+  id              String        @id @default(cuid())
+  messageId       String        @unique
+  mainCategoryId  String
+  subCategoryId   String?
+  productName     String        @default("غير محدد")
+  rawAiResponse   String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  message         Message       @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  mainCategory    MainCategory  @relation(fields: [mainCategoryId], references: [id])
+  subCategory     SubCategory?  @relation(fields: [subCategoryId], references: [id])
+  isPrimary       Boolean       @default(true)
+}
+
+model AdditionalClassification {
+  id              String        @id @default(cuid())
+  messageId       String
+  mainCategoryId  String
+  subCategoryId   String?
+  productName     String        @default("غير محدد")
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  message         Message       @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  mainCategory    MainCategory  @relation(fields: [mainCategoryId], references: [id])
+  subCategory     SubCategory?  @relation(fields: [subCategoryId], references: [id])
+
+  @@index([messageId])
+  @@index([mainCategoryId])
+}
+
+model GroupReply {
+  id             String          @id @default(cuid())
+  merchantId     String
+  mainCategoryId String
+  productId      String?
+  subCategoryId  String?
+  replyText      String          @default("")
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  merchant       MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  mainCategory   MainCategory    @relation(fields: [mainCategoryId], references: [id])
+  product        Product?        @relation(fields: [productId], references: [id])
+  subCategory    SubCategory?    @relation(fields: [subCategoryId], references: [id])
+
+  @@unique([merchantId, mainCategoryId, productId, subCategoryId])
+}
