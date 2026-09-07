@@ -12,6 +12,10 @@ import {
 } from "@/lib/ai/classifier";
 import { saveAudioFile } from "@/lib/audio";
 import { UNDEFINED_LABEL } from "@/lib/utils";
+import {
+  detectAdditionalClassifications,
+  hasMultipleQuestions,
+} from "@/lib/ai/additional-classifier";
 
 export async function GET(request: NextRequest) {
   try {
@@ -48,6 +52,11 @@ export async function GET(request: NextRequest) {
                       : {}),
                   },
                 },
+                {
+                  additionalClassifications: {
+                    contains: mainCategoryId,
+                  },
+                },
               ],
             }
           : {}),
@@ -63,12 +72,24 @@ export async function GET(request: NextRequest) {
       orderBy: { receivedAt: "desc" },
     });
 
+    const filteredMessages = mainCategoryId
+      ? messages.filter((message) =>
+          getMessageClassifications(message).some(
+            (item) =>
+              item.mainCategoryId === mainCategoryId &&
+              (!subCategoryId || item.subCategoryId === subCategoryId) &&
+              (!productName || item.productName === productName),
+          ),
+        )
+      : messages;
+
     return NextResponse.json(
-      messages.map((message) => ({
+      filteredMessages.map((message) => ({
         ...message,
-        // التصنيف الوحيد المعتمد للرسالة هو التصنيف الرئيسي.
-        // نعيد مصفوفة فارغة للتوافق مع الواجهة القديمة، دون عرض نتائج إضافية خاطئة.
-        additionalClassifications: [],
+        additionalClassifications: parseAdditionalClassifications(
+          message.additionalClassifications,
+          message.transcription || message.body,
+        ),
       })),
     );
   } catch (e) {
@@ -158,6 +179,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const additionalClassifications = await detectAdditionalClassifications(
+      merchantId,
+      messageType === "voice" ? transcription || body : body,
+      classification,
+    );
+
     const message = await prisma.message.create({
       data: {
         merchantId,
@@ -168,7 +195,9 @@ export async function POST(request: NextRequest) {
         transcription,
         source,
         status: "classified",
-        additionalClassifications: null,
+        additionalClassifications: additionalClassifications.length
+          ? JSON.stringify(additionalClassifications)
+          : null,
         classification: {
           create: {
             mainCategoryId: classification.mainCategoryId,
@@ -192,5 +221,33 @@ export async function POST(request: NextRequest) {
       { error: (e as Error).message || "خطأ" },
       { status: 500 },
     );
+  }
+}
+
+function parseAdditionalClassifications(value: string | null, text: string) {
+  if (!value || !hasMultipleQuestions(text)) return [];
+  try {
+    return JSON.parse(value);
+  } catch {
+    return [];
+  }
+}
+
+function getMessageClassifications(message: {
+  body: string;
+  transcription: string | null;
+  classification: {
+    mainCategoryId: string;
+    subCategoryId: string | null;
+    productName: string;
+  } | null;
+  additionalClassifications: string | null;
+}) {
+  const primary = message.classification ? [message.classification] : [];
+  if (!hasMultipleQuestions(message.transcription || message.body)) return primary;
+  try {
+    return primary.concat(JSON.parse(message.additionalClassifications || "[]"));
+  } catch {
+    return primary;
   }
 }

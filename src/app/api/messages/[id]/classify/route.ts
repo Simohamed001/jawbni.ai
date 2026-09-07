@@ -7,6 +7,7 @@ import {
 import { classifyMessage, classifyVoiceMessage } from "@/lib/ai/classifier";
 import { getFullAudioPath } from "@/lib/audio";
 import { existsSync } from "fs";
+import { detectAdditionalClassifications } from "@/lib/ai/additional-classifier";
 
 export async function POST(
   _request: Request,
@@ -53,11 +54,19 @@ export async function POST(
       result = await classifyMessage(merchantId, text);
     }
 
+    const additionalClassifications = await detectAdditionalClassifications(
+      merchantId,
+      transcription || message.body,
+      result,
+    );
+
     const updated = await prisma.message.update({
       where: { id },
       data: {
         status: "classified",
-        additionalClassifications: null,
+        additionalClassifications: additionalClassifications.length
+          ? JSON.stringify(additionalClassifications)
+          : null,
         ...(transcription
           ? { transcription, body: transcription }
           : {}),
@@ -111,13 +120,20 @@ export async function PATCH(
 
     const body = transcription || message.body;
     const result = await classifyMessage(merchantId, body);
+    const additionalClassifications = await detectAdditionalClassifications(
+      merchantId,
+      body,
+      result,
+    );
 
     const updated = await prisma.message.update({
       where: { id },
       data: {
         transcription,
         body: transcription || "🎤 رسالة صوتية",
-        additionalClassifications: null,
+        additionalClassifications: additionalClassifications.length
+          ? JSON.stringify(additionalClassifications)
+          : null,
         classification: {
           upsert: {
             create: {
