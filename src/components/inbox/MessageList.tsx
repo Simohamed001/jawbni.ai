@@ -16,11 +16,6 @@ export interface MessageItem {
     subCategory?: { name: string } | null;
     productName: string;
   } | null;
-  additionalClassifications?: Array<{
-    mainCategoryName: string;
-    subCategoryName?: string | null;
-    productName: string;
-  }>;
 }
 
 interface MessageListProps {
@@ -76,14 +71,6 @@ export function MessageList({
                   )}
                 </div>
               )}
-              {msg.additionalClassifications?.map((classification, index) => (
-                <div key={`${msg.id}-classification-${index}`} className="mt-1 text-xs text-gray-600">
-                  <span className="font-semibold text-[#075E54]">{classification.mainCategoryName}</span>
-                  {classification.subCategoryName && <span> / {classification.subCategoryName}</span>}
-                  {classification.productName && <span> / {classification.productName}</span>}
-                </div>
-              ))}
-
               <div className="mt-1 flex justify-end">
                 <span className="text-[10px] text-gray-500 uppercase">
                   {formatTime(msg.receivedAt)}

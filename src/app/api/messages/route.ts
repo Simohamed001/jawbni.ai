@@ -48,13 +48,6 @@ export async function GET(request: NextRequest) {
                       : {}),
                   },
                 },
-                {
-                  additionalClassifications: {
-                    contains: productName && productName !== UNDEFINED_LABEL
-                      ? productName
-                      : mainCategoryId,
-                  },
-                },
               ],
             }
           : {}),
@@ -73,9 +66,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       messages.map((message) => ({
         ...message,
-        additionalClassifications: parseAdditionalClassifications(
-          message.additionalClassifications,
-        ),
+        // التصنيف الوحيد المعتمد للرسالة هو التصنيف الرئيسي.
+        // نعيد مصفوفة فارغة للتوافق مع الواجهة القديمة، دون عرض نتائج إضافية خاطئة.
+        additionalClassifications: [],
       })),
     );
   } catch (e) {
@@ -165,12 +158,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const additionalClassifications = await detectAdditionalClassifications(
-      merchantId,
-      messageType === "voice" ? transcription || body : body,
-      classification,
-    );
-
     const message = await prisma.message.create({
       data: {
         merchantId,
@@ -181,9 +168,7 @@ export async function POST(request: NextRequest) {
         transcription,
         source,
         status: "classified",
-        additionalClassifications: additionalClassifications.length
-          ? JSON.stringify(additionalClassifications)
-          : null,
+        additionalClassifications: null,
         classification: {
           create: {
             mainCategoryId: classification.mainCategoryId,
@@ -207,54 +192,5 @@ export async function POST(request: NextRequest) {
       { error: (e as Error).message || "خطأ" },
       { status: 500 },
     );
-  }
-}
-
-async function detectAdditionalClassifications(
-  merchantId: string,
-  text: string,
-  primary: Awaited<ReturnType<typeof classifyMessage>>,
-) {
-  const [categories, products] = await Promise.all([
-    prisma.mainCategory.findMany({ where: { merchantId }, select: { id: true, name: true } }),
-    prisma.product.findMany({ where: { merchantId, isSold: true }, select: { officialName: true, keywords: true } }),
-  ]);
-  const lower = text.toLowerCase();
-  const results: typeof primary[] = [];
-  const add = (value: typeof primary) => {
-    if (value.mainCategoryId === primary.mainCategoryId && value.productName === primary.productName) return;
-    if (!results.some((item) => item.mainCategoryId === value.mainCategoryId && item.productName === value.productName)) results.push(value);
-  };
-  const shipping = categories.find((category) => category.name === "الشحن والتوصيل");
-  if (shipping && /(توصيل|الشحن|شحن|استلام|livraison|shipping|delivery)/i.test(lower)) {
-    add({ mainCategoryId: shipping.id, subCategoryId: null, productName: UNDEFINED_LABEL, rawAiResponse: null, mainCategoryName: shipping.name, subCategoryName: UNDEFINED_LABEL });
-  }
-  for (const category of categories) {
-    if (category.id !== primary.mainCategoryId && category.id !== shipping?.id && category.name !== "أسئلة عن المنتج" && lower.includes(category.name.toLowerCase())) {
-      add({ mainCategoryId: category.id, subCategoryId: null, productName: UNDEFINED_LABEL, rawAiResponse: null, mainCategoryName: category.name, subCategoryName: UNDEFINED_LABEL });
-    }
-  }
-  const productCategory = categories.find((category) => category.name === "أسئلة عن المنتج");
-  const isQuestion = /[؟?]|واش|هل|كيف|شنو|شحال|كم|متى|فين|بغيت|رجع|ارجاع|إرجاع|مرتجع|استبدال|nrj3|return|retour|what|how|when|price|combien/i.test(lower);
-  if (productCategory && isQuestion) {
-    for (const product of products) {
-      const keywords = JSON.parse(product.keywords || "[]") as string[];
-      const aiProductText = primary.productName.toLowerCase();
-      if ([product.officialName, ...keywords].some((term) =>
-        term.trim() && (lower.includes(term.toLowerCase()) || aiProductText.includes(term.toLowerCase()))
-      )) {
-        add({ mainCategoryId: productCategory.id, subCategoryId: null, productName: product.officialName, rawAiResponse: null, mainCategoryName: productCategory.name, subCategoryName: UNDEFINED_LABEL });
-      }
-    }
-  }
-  return results;
-}
-
-function parseAdditionalClassifications(value: string | null) {
-  if (!value) return [];
-  try {
-    return JSON.parse(value);
-  } catch {
-    return [];
   }
 }

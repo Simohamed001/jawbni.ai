@@ -57,6 +57,7 @@ export async function POST(
       where: { id },
       data: {
         status: "classified",
+        additionalClassifications: null,
         ...(transcription
           ? { transcription, body: transcription }
           : {}),
@@ -116,6 +117,7 @@ export async function PATCH(
       data: {
         transcription,
         body: transcription || "🎤 رسالة صوتية",
+        additionalClassifications: null,
         classification: {
           upsert: {
             create: {

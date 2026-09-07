@@ -55,7 +55,7 @@ export async function GET() {
 
     const tree: TreeNode[] = mainCategories.map((main) => {
       const mainMessages = messages.filter(
-        (m) => getMessageClassifications(m).some((item) => item.mainCategoryId === main.id),
+        (m) => m.classification?.mainCategoryId === main.id,
       );
 
       const configuredProductNames = new Set(
@@ -76,24 +76,22 @@ export async function GET() {
 
         for (const productName of uniqueProducts) {
           const productMessages = mainMessages.filter(
-            (m) => getMessageClassifications(m).some((item) =>
-              item.mainCategoryId === main.id && item.productName === productName),
+            (m) => m.classification?.mainCategoryId === main.id &&
+              m.classification.productName === productName,
           );
 
           const subNodes: TreeNode[] = main.subCategories.map((sub) => ({
             id: `${main.id}-${productName}-${sub.id}`,
             label: sub.name,
             type: "sub" as const,
-            count: productMessages.filter(
-              (m) => getMessageClassifications(m).some((item) => item.subCategoryId === sub.id),
-            ).length,
+              count: productMessages.filter((m) => m.classification?.subCategoryId === sub.id).length,
             mainCategoryId: main.id,
             productName,
             subCategoryId: sub.id,
           }));
 
           const undefinedSubCount = productMessages.filter(
-            (m) => getMessageClassifications(m).some((item) => !item.subCategoryId),
+            (m) => !m.classification?.subCategoryId,
           ).length;
 
           if (undefinedSubCount > 0 || subNodes.length === 0) {
@@ -119,8 +117,8 @@ export async function GET() {
         }
 
         const undefinedProductCount = mainMessages.filter(
-          (m) => getMessageClassifications(m).some((item) =>
-            item.mainCategoryId === main.id && item.productName === UNDEFINED_LABEL),
+          (m) => m.classification?.mainCategoryId === main.id &&
+            m.classification.productName === UNDEFINED_LABEL,
         ).length;
 
         if (undefinedProductCount > 0) {
@@ -149,16 +147,14 @@ export async function GET() {
           id: `${main.id}-sub-${sub.id}`,
           label: sub.name,
           type: "sub" as const,
-          count: mainMessages.filter(
-            (m) => getMessageClassifications(m).some((item) => item.subCategoryId === sub.id),
-          ).length,
+            count: mainMessages.filter((m) => m.classification?.subCategoryId === sub.id).length,
           mainCategoryId: main.id,
           productName: UNDEFINED_LABEL,
           subCategoryId: sub.id,
         }));
 
         const undefinedCount = mainMessages.filter(
-          (m) => getMessageClassifications(m).some((item) => !item.subCategoryId),
+          (m) => !m.classification?.subCategoryId,
         ).length;
 
         subNodes.push({
@@ -187,17 +183,5 @@ export async function GET() {
   } catch (e) {
     if ((e as Error).message === "UNAUTHORIZED") return unauthorizedResponse();
     return NextResponse.json({ error: "خطأ" }, { status: 500 });
-  }
-}
-
-function getMessageClassifications(message: {
-  classification: { mainCategoryId: string; subCategoryId: string | null; productName: string } | null;
-  additionalClassifications: string | null;
-}) {
-  const primary = message.classification ? [message.classification] : [];
-  try {
-    return primary.concat(JSON.parse(message.additionalClassifications || "[]"));
-  } catch {
-    return primary;
   }
 }
