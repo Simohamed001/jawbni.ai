@@ -14,7 +14,6 @@ import { saveAudioFile } from "@/lib/audio";
 import { UNDEFINED_LABEL } from "@/lib/utils";
 import {
   detectAdditionalClassifications,
-  hasMultipleQuestions,
 } from "@/lib/ai/additional-classifier";
 
 export async function GET(request: NextRequest) {
@@ -88,7 +87,6 @@ export async function GET(request: NextRequest) {
         ...message,
         additionalClassifications: parseAdditionalClassifications(
           message.additionalClassifications,
-          message.transcription || message.body,
         ),
       })),
     );
@@ -224,10 +222,13 @@ export async function POST(request: NextRequest) {
   }
 }
 
-function parseAdditionalClassifications(value: string | null, text: string) {
-  if (!value || !hasMultipleQuestions(text)) return [];
+function parseAdditionalClassifications(value: string | null) {
+  if (!value) return [];
   try {
-    return JSON.parse(value);
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item) => item && item.inferredByAi === true)
+      : [];
   } catch {
     return [];
   }
@@ -244,9 +245,12 @@ function getMessageClassifications(message: {
   additionalClassifications: string | null;
 }) {
   const primary = message.classification ? [message.classification] : [];
-  if (!hasMultipleQuestions(message.transcription || message.body)) return primary;
   try {
-    return primary.concat(JSON.parse(message.additionalClassifications || "[]"));
+    const parsed = JSON.parse(message.additionalClassifications || "[]");
+    const additional = Array.isArray(parsed)
+      ? parsed.filter((item) => item && item.inferredByAi === true)
+      : [];
+    return primary.concat(additional);
   } catch {
     return primary;
   }

@@ -1,4 +1,10 @@
 import { prisma } from "@/lib/prisma";
+import { matchCategoryId } from "@/lib/ai/prompt";
+import {
+  getCurrentModel,
+  getGeminiClient,
+  recordRequest,
+} from "@/lib/ai/gemini-rotation";
 import { UNDEFINED_LABEL } from "@/lib/utils";
 
 export type ClassificationLike = {
@@ -8,96 +14,134 @@ export type ClassificationLike = {
   rawAiResponse: string | null;
   mainCategoryName: string;
   subCategoryName: string;
+  inferredByAi?: boolean;
 };
 
-const questionCuePattern =
-  /واش|هل|كيفاش|كيف|شحال|كم|متى|فين|أين|شنو|اشنو|ماهو|ما هي|combien|comment|quand|où|quel(?:le|s)?|est-ce que|what|how|when|where|price/gi;
+type CategoryContext = {
+  id: string;
+  name: string;
+  subCategories: { id: string; name: string }[];
+};
 
-const shippingPattern =
-  /توصيل|الشحن|شحن|استلام|livraison|shipping|delivery|tawssil|twsel|wssel/i;
+type ProductContext = {
+  officialName: string;
+  keywords: string[];
+};
 
-const complaintPattern =
-  /مشكلة|شكوى|تالف|مكسور|probl[eè]me|plainte|bug|erreur|ma khdam|khdamch|mchkel/i;
-
-const confirmationPattern =
-  /تأكيد|أكد|بغيت نطلب|بغيت نشري|نطلب|commande|command|ncommandi|nchri|order|confirm/i;
-
-const returnPattern =
-  /رجع|ارجاع|إرجاع|مرتجع|استبدال|nrj3|return|retour/i;
-
-const productQuestionPattern =
-  /الثمن|السعر|سعر|بكم|شحال|كم|منتج|منتوج|عطر|produit|price|combien|واش موجود|هل موجود|كاين|موجود/i;
-
-function countQuestionCues(text: string) {
-  const punctuationCount = (text.match(/[؟?]/g) || []).length;
-  const cueCount = text.match(questionCuePattern)?.length || 0;
-  return Math.max(punctuationCount, cueCount);
+function normalize(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function splitQuestionParts(text: string) {
-  const explicitParts = text
-    .split(/[؟?]+/)
-    .map((part) => part.trim())
-    .filter(Boolean);
+function extractJsonObject(text: string): Record<string, unknown> | null {
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) return null;
 
-  if (explicitParts.length > 1) return explicitParts;
-
-  const matches = [...text.matchAll(questionCuePattern)];
-  if (matches.length <= 1) return text.trim() ? [text.trim()] : [];
-
-  const separatedMatches = matches.filter((match, index) => {
-    if (index === 0) return true;
-    const previousEnd =
-      (matches[index - 1].index ?? 0) + matches[index - 1][0].length;
-    return /(?:^|\s)(?:و|and|et)\s*$/i.test(
-      text.slice(previousEnd, match.index ?? text.length),
-    );
-  });
-
-  if (separatedMatches.length <= 1) return text.trim() ? [text.trim()] : [];
-
-  return separatedMatches.map((match, index) => {
-    const start = match.index ?? 0;
-    const nextStart = separatedMatches[index + 1]?.index ?? text.length;
-    return text.slice(start, nextStart).trim();
-  });
+  try {
+    return JSON.parse(match[0]) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
 
-export function hasMultipleQuestions(text: string) {
-  return countQuestionCues(text) >= 2 && splitQuestionParts(text).length >= 2;
+function parseKeywords(value: string) {
+  try {
+    const parsed = JSON.parse(value || "[]");
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
 }
 
-function createClassification(
-  category: { id: string; name: string },
-  productName = UNDEFINED_LABEL,
-): ClassificationLike {
-  return {
-    mainCategoryId: category.id,
-    subCategoryId: null,
-    productName,
-    rawAiResponse: null,
-    mainCategoryName: category.name,
-    subCategoryName: UNDEFINED_LABEL,
-  };
+function findProduct(value: string, products: ProductContext[]) {
+  const normalized = normalize(value);
+  if (!normalized || normalized === normalize(UNDEFINED_LABEL)) return null;
+
+  return (
+    products.find((product) => normalize(product.officialName) === normalized) ||
+    products.find((product) =>
+      product.keywords.some((keyword) => normalize(keyword) === normalized),
+    ) ||
+    null
+  );
+}
+
+function buildAnalysisPrompt(
+  text: string,
+  primary: ClassificationLike,
+  categories: CategoryContext[],
+  products: ProductContext[],
+) {
+  const categoryCatalog = categories
+    .map(
+      (category) =>
+        `- ${category.name} (subcategories: ${
+          category.subCategories.map((sub) => sub.name).join(", ") || "غير محدد"
+        })`,
+    )
+    .join("\n");
+  const productCatalog = products.length
+    ? products
+        .map((product) => `- ${product.officialName}`)
+        .join("\n")
+    : "لا توجد منتجات مسجلة";
+
+  return `أنت محلل نوايا لرسائل الزبائن المغاربة. حلل الرسالة كاملة من سياقها، ولا تعتمد على عدد علامات الاستفهام أو كلمات منفردة لاتخاذ القرار.
+
+التصنيف الأساسي الذي اختاره النظام:
+- القسم: ${primary.mainCategoryName}
+- القسم الفرعي: ${primary.subCategoryName}
+- المنتج: ${primary.productName}
+
+التصنيفات المتاحة:
+${categoryCatalog}
+
+المنتجات المتاحة:
+${productCatalog}
+
+الرسالة:
+"${text}"
+
+المطلوب:
+1. قرر من المعنى والسياق هل تحتوي الرسالة على نية واحدة أم أكثر من طلب/سؤال مستقل.
+2. إذا كانت نية واحدة، أعد مصفوفة فارغة حتى لو ذكرت الرسالة أكثر من كلمة مرتبطة بتصنيفات مختلفة.
+3. إذا احتوت على طلبات أو أسئلة مستقلة فعلًا، أعد فقط التصنيفات الإضافية غير الموجودة في التصنيف الأساسي.
+4. لا تضف تصنيفًا بسبب ذكر كلمة عابرة أو لأن موضوعًا ثانويًا ورد كجزء من نفس الطلب.
+5. استخدم أسماء الأقسام والمنتجات من القوائم كما هي. لا تخترع أسماء.
+
+أعد JSON فقط بهذا الشكل:
+{
+  "hasMultipleIntents": true أو false,
+  "additionalClassifications": [
+    {
+      "mainCategory": "اسم القسم",
+      "subCategory": "اسم القسم الفرعي أو غير محدد",
+      "product": "اسم المنتج الرسمي أو غير محدد"
+    }
+  ]
+}`;
 }
 
 /**
- * يسمح بأكثر من تصنيف فقط عندما تحتوي الرسالة على سؤالين أو أكثر.
- * كل تصنيف إضافي يجب أن يكون مدعومًا بإشارة واضحة داخل سياق سؤال مستقل.
+ * يترك قرار تعدد التصنيف لنموذج الذكاء الاصطناعي، مع التحقق من أن كل نتيجة
+ * تطابق قسمًا أو منتجًا موجودًا لدى التاجر قبل حفظها.
  */
 export async function detectAdditionalClassifications(
   merchantId: string,
   text: string,
   primary: ClassificationLike,
 ) {
-  if (!hasMultipleQuestions(text)) return [];
+  if (!text.trim() || text.trim() === "🎤 رسالة صوتية") return [];
 
-  const parts = splitQuestionParts(text);
-
-  const [categories, products] = await Promise.all([
+  const [categories, rawProducts] = await Promise.all([
     prisma.mainCategory.findMany({
       where: { merchantId },
-      select: { id: true, name: true },
+      select: {
+        id: true,
+        name: true,
+        subCategories: { select: { id: true, name: true } },
+      },
     }),
     prisma.product.findMany({
       where: { merchantId, isSold: true },
@@ -105,71 +149,92 @@ export async function detectAdditionalClassifications(
     }),
   ]);
 
-  const results: ClassificationLike[] = [];
-  const add = (value: ClassificationLike) => {
-    if (
-      value.mainCategoryId === primary.mainCategoryId &&
-      value.productName === primary.productName
-    ) {
-      return;
-    }
+  const products = rawProducts.map((product) => ({
+    officialName: product.officialName,
+    keywords: parseKeywords(product.keywords),
+  }));
+
+  try {
+    const model = getGeminiClient(undefined, true);
+    recordRequest(getCurrentModel());
+    const response = await model.generateContent(
+      buildAnalysisPrompt(text, primary, categories, products),
+    );
+    const raw = response.response.text();
+    const parsed = extractJsonObject(raw);
+    const additional = parsed?.additionalClassifications;
 
     if (
-      !results.some(
-        (item) =>
-          item.mainCategoryId === value.mainCategoryId &&
-          item.productName === value.productName,
-      )
+      parsed?.hasMultipleIntents !== true ||
+      !Array.isArray(additional)
     ) {
-      results.push(value);
-    }
-  };
-
-  for (const part of parts) {
-    const shipping = categories.find((category) => category.name === "الشحن والتوصيل");
-    if (shipping && shippingPattern.test(part)) {
-      add(createClassification(shipping));
+      return [];
     }
 
-    const complaint = categories.find((category) => category.name === "الشكاوى أو المشاكل");
-    if (complaint && complaintPattern.test(part)) {
-      add(createClassification(complaint));
-    }
+    const results: ClassificationLike[] = [];
+    for (const item of additional) {
+      if (!item || typeof item !== "object") continue;
 
-    const confirmation = categories.find((category) => category.name === "التأكيد");
-    if (confirmation && confirmationPattern.test(part)) {
-      add(createClassification(confirmation));
-    }
-
-    const returns = categories.find((category) => category.name === "المرتجعات");
-    if (returns && returnPattern.test(part)) {
-      add(createClassification(returns));
-    }
-
-    const productCategory = categories.find((category) => category.name === "أسئلة عن المنتج");
-    if (productCategory && productQuestionPattern.test(part)) {
-      const product = products.find((candidate) => {
-        let keywords: string[] = [];
-        try {
-          keywords = JSON.parse(candidate.keywords || "[]") as string[];
-        } catch {
-          keywords = [];
-        }
-
-        return [candidate.officialName, ...keywords].some(
-          (term) => term.trim() && part.toLowerCase().includes(term.toLowerCase()),
-        );
-      });
-
-      const productName =
-        product?.officialName ||
-        (primary.productName !== UNDEFINED_LABEL ? primary.productName : UNDEFINED_LABEL);
-
-      if (productName !== UNDEFINED_LABEL) {
-        add(createClassification(productCategory, productName));
+      const candidate = item as Record<string, unknown>;
+      const mainCategoryName =
+        typeof candidate.mainCategory === "string"
+          ? candidate.mainCategory
+          : "";
+      const mainCategoryId = matchCategoryId(mainCategoryName, categories);
+      if (!mainCategoryId) {
+        continue;
       }
-    }
-  }
 
-  return results;
+      const category = categories.find((entry) => entry.id === mainCategoryId);
+      if (!category) continue;
+
+      const subCategoryName =
+        typeof candidate.subCategory === "string"
+          ? candidate.subCategory
+          : UNDEFINED_LABEL;
+      const subCategoryId =
+        matchCategoryId(subCategoryName, category.subCategories) || null;
+      const productValue =
+        typeof candidate.product === "string" ? candidate.product : "";
+      const product = findProduct(productValue, products);
+      const productName = product?.officialName || UNDEFINED_LABEL;
+
+      if (
+        mainCategoryId === primary.mainCategoryId &&
+        subCategoryId === primary.subCategoryId &&
+        productName === primary.productName
+      ) {
+        continue;
+      }
+
+      if (
+        results.some(
+          (entry) =>
+            entry.mainCategoryId === mainCategoryId &&
+            entry.subCategoryId === subCategoryId &&
+            entry.productName === productName,
+        )
+      ) {
+        continue;
+      }
+
+      results.push({
+        mainCategoryId,
+        subCategoryId,
+        productName,
+        rawAiResponse: raw,
+        mainCategoryName: category.name,
+        subCategoryName: subCategoryId
+          ? category.subCategories.find((sub) => sub.id === subCategoryId)?.name ||
+            UNDEFINED_LABEL
+          : UNDEFINED_LABEL,
+        inferredByAi: true,
+      });
+    }
+
+    return results;
+  } catch (error) {
+    console.error("[Additional Classification] Gemini analysis failed:", error);
+    return [];
+  }
 }

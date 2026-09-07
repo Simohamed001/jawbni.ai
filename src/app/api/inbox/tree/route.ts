@@ -5,7 +5,6 @@ import {
   unauthorizedResponse,
 } from "@/lib/api-auth";
 import { UNDEFINED_LABEL } from "@/lib/utils";
-import { hasMultipleQuestions } from "@/lib/ai/additional-classifier";
 
 export async function GET() {
   try {
@@ -198,9 +197,12 @@ function getMessageClassifications(message: {
   additionalClassifications: string | null;
 }) {
   const primary = message.classification ? [message.classification] : [];
-  if (!hasMultipleQuestions(message.transcription || message.body)) return primary;
   try {
-    return primary.concat(JSON.parse(message.additionalClassifications || "[]"));
+    const parsed = JSON.parse(message.additionalClassifications || "[]");
+    const additional = Array.isArray(parsed)
+      ? parsed.filter((item) => item && item.inferredByAi === true)
+      : [];
+    return primary.concat(additional);
   } catch {
     return primary;
   }
