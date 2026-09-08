@@ -83,12 +83,9 @@ async function generateUniqueSlug(name: string): Promise<string> {
  * إذا كان الجدول فارغاً (أول استخدام)، تُزرع القائمة الافتراضية
  * للمدن المغربية تلقائياً (مفعّلة isActive: true) ثم تُعاد للمستخدم.
  */
-export async function GET(request: Request) {
+export async function GET() {
   try {
     await requireMerchantId();
-
-    const { searchParams } = new URL(request.url);
-    const withMessages = searchParams.get("withMessages") === "true";
 
     const count = await prisma.deliveryCity.count();
     if (count === 0) {
@@ -98,15 +95,10 @@ export async function GET(request: Request) {
           slug: slugify(name),
           isActive: true,
         })),
-        skipDuplicates: true,
       });
     }
 
-    // withMessages=true: المدن المفعلة فقط والتي ترتبط برسالة واحدة على الأقل
     const cities = await prisma.deliveryCity.findMany({
-      where: withMessages
-        ? { isActive: true, messages: { some: {} } }
-        : undefined,
       orderBy: { name: "asc" },
     });
     return NextResponse.json(cities);
