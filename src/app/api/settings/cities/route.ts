@@ -22,6 +22,44 @@ function slugify(name: string): string {
 }
 
 /**
+ * القائمة الافتراضية للمدن المغربية — تُزرع تلقائياً عند أول استخدام
+ * (عندما يكون جدول DeliveryCity فارغاً)
+ */
+const DEFAULT_DELIVERY_CITIES = [
+  "الدار البيضاء",
+  "الرباط",
+  "سلا",
+  "تمارة",
+  "المحمدية",
+  "الجديدة",
+  "سطات",
+  "برشيد",
+  "طنجة",
+  "تطوان",
+  "القنيطرة",
+  "العرائش",
+  "القصر الكبير",
+  "الحسيمة",
+  "فاس",
+  "مكناس",
+  "وجدة",
+  "الناظور",
+  "تازة",
+  "بركان",
+  "مراكش",
+  "أسفي",
+  "بني ملال",
+  "خريبكة",
+  "خنيفرة",
+  "أكادير",
+  "تارودانت",
+  "تيزنيت",
+  "كلميم",
+  "العيون",
+  "الداخلة",
+] as const;
+
+/**
  * توليد slug فريد: يضيف لاحقة رقمية عند التكرار
  */
 async function generateUniqueSlug(name: string): Promise<string> {
@@ -41,11 +79,26 @@ async function generateUniqueSlug(name: string): Promise<string> {
 
 /**
  * GET /api/settings/cities
- * جلب جميع المدن المسجلة
+ * جلب جميع المدن المسجلة.
+ * إذا كان الجدول فارغاً (أول استخدام)، تُزرع القائمة الافتراضية
+ * للمدن المغربية تلقائياً (مفعّلة isActive: true) ثم تُعاد للمستخدم.
  */
 export async function GET() {
   try {
     await requireMerchantId();
+
+    const count = await prisma.deliveryCity.count();
+    if (count === 0) {
+      await prisma.deliveryCity.createMany({
+        data: DEFAULT_DELIVERY_CITIES.map((name) => ({
+          name,
+          slug: slugify(name),
+          isActive: true,
+        })),
+        skipDuplicates: true,
+      });
+    }
+
     const cities = await prisma.deliveryCity.findMany({
       orderBy: { name: "asc" },
     });
