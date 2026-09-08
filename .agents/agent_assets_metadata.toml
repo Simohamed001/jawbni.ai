@@ -1,0 +1,16 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "66Hj68h_7L8PE0A2Rrq2E"
+uri = "file://screenshots/app-preview.jpg"
+type = "image"
+title = "لقطة معاينة التطبيق"
+description = "لقطة من صفحة تسجيل الدخول أثناء تشغيل المعاينة."
+logical_id = "def5f27b-9367-4006-93d6-489387162681"
+content_hash = "sha256:0d7919a47d3f0728fea1b61751b6f40814a5719d3724fec16b3d1fd50b167a3c"
+size = 19127
+mtime_ms = 1788853940276
+storage_uri = "gcs://replit-rams-assets-kirk/rams/assets/repl:c959fb18-d702-4af9-a61e-bf996e1fd4ba/def5f27b-9367-4006-93d6-489387162681/ca3501c3-30a6-463a-b730-dce9a7f891d1"
+storage_version_token = "1788853948386611"
+content_type = "image/jpeg"
