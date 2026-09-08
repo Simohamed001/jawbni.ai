@@ -67,6 +67,7 @@ export async function GET(request: NextRequest) {
             subCategory: true,
           },
         },
+        city: true,
       },
       orderBy: { receivedAt: "desc" },
     });

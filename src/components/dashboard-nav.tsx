@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Settings, Inbox, Trash2, Truck, MapPin } from "lucide-react";
 
@@ -19,18 +19,19 @@ export function DashboardNav() {
   const [shippingOpen, setShippingOpen] = useState(false);
   const shippingRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/settings/cities?withMessages=true")
-      .then((res) => (res.ok ? res.json() : []))
-      .then((data) => {
-        if (!cancelled) setShippingCities(Array.isArray(data) ? data : []);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
+  const loadShippingCities = useCallback(async () => {
+    try {
+      const res = await fetch("/api/settings/cities?withMessages=true");
+      const data = res.ok ? await res.json() : [];
+      setShippingCities(Array.isArray(data) ? data : []);
+    } catch {
+      // تجاهل أخطاء الشبكة — تبقى القائمة كما هي
+    }
   }, []);
+
+  useEffect(() => {
+    loadShippingCities();
+  }, [loadShippingCities]);
 
   // إغلاق القائمة الفرعية عند الضغط خارجها
   useEffect(() => {
@@ -69,7 +70,11 @@ export function DashboardNav() {
       <div ref={shippingRef} className="relative flex items-center">
         <button
           type="button"
-          onClick={() => setShippingOpen((v) => !v)}
+          onClick={() => {
+            const opening = !shippingOpen;
+            setShippingOpen(opening);
+            if (opening) loadShippingCities();
+          }}
           aria-expanded={shippingOpen}
           aria-haspopup="true"
           className="flex items-center gap-1 hover:underline"

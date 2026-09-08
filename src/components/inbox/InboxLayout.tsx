@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { CategoryTree, type TreeNode } from "@/components/inbox/CategoryTree";
-import { MessageList, type MessageItem } from "@/components/inbox/MessageList";
+import { MessageList, type CityOption, type MessageItem } from "@/components/inbox/MessageList";
 import { MessageComposer } from "@/components/inbox/MessageComposer";
 import { MoreVertical, Search, SquarePen } from "lucide-react";
 import { UNDEFINED_LABEL } from "@/lib/utils";
@@ -14,6 +14,7 @@ export function InboxLayout() {
   const [groupReply, setGroupReply] = useState("");
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
+  const [cities, setCities] = useState<CityOption[]>([]);
 
   function findFirstPopulatedNode(nodes: TreeNode[]): TreeNode | null {
     for (const node of nodes) {
@@ -23,6 +24,23 @@ export function InboxLayout() {
     }
     return null;
   }
+
+  useEffect(() => {
+    fetch("/api/settings/cities")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        const active = Array.isArray(data) ? data : [];
+        setCities(
+          active
+            .filter((c: { isActive: boolean }) => c.isActive)
+            .map((c: { id: string; name: string }) => ({
+              id: c.id,
+              name: c.name,
+            })),
+        );
+      })
+      .catch(() => setCities([]));
+  }, []);
 
   const loadTree = useCallback(async () => {
     try {
@@ -108,6 +126,18 @@ export function InboxLayout() {
     }
   }
 
+  // ربط رسالة بمدينة شحن (أو إلغاء الربط عند cityId = null)
+  async function assignCity(id: string, cityId: string | null) {
+    const res = await fetch(`/api/messages/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cityId }),
+    });
+    if (res.ok) {
+      loadMessages();
+    }
+  }
+
   async function updateTranscription(id: string, transcription: string) {
     await fetch(`/api/messages/${id}/classify`, {
       method: "PATCH",
@@ -183,7 +213,9 @@ export function InboxLayout() {
           <div className="relative h-full">
             <MessageList
               messages={messages}
+              cities={cities}
               onUpdateTranscription={updateTranscription}
+              onAssignCity={assignCity}
             />
           </div>
         </div>

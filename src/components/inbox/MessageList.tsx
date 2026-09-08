@@ -1,7 +1,7 @@
 "use client";
 
 import { formatTime } from "@/lib/utils";
-import { Mic } from "lucide-react";
+import { Mic, MapPin } from "lucide-react";
 
 export interface MessageItem {
   id: string;
@@ -21,18 +21,29 @@ export interface MessageItem {
     subCategoryName?: string | null;
     productName: string;
   }>;
+  cityId?: string | null;
+  city?: { name: string; slug: string } | null;
+}
+
+export interface CityOption {
+  id: string;
+  name: string;
 }
 
 interface MessageListProps {
   messages: MessageItem[];
+  cities?: CityOption[];
   groupReply?: string;
   onCopyReply?: (text: string) => void;
   onUpdateTranscription?: (id: string, transcription: string) => void;
+  onAssignCity?: (id: string, cityId: string | null) => void;
 }
 
 export function MessageList({
   messages,
+  cities = [],
   onUpdateTranscription,
+  onAssignCity,
 }: MessageListProps) {
   if (messages.length === 0) {
     return (
@@ -83,6 +94,26 @@ export function MessageList({
                   {classification.productName && <span> / {classification.productName}</span>}
                 </div>
               ))}
+              {onAssignCity && (
+                <div className="mt-2 flex items-center gap-1 border-t border-gray-100 pt-1.5">
+                  <MapPin className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                  <select
+                    aria-label="مدينة الشحن"
+                    value={msg.cityId ?? ""}
+                    onChange={(e) =>
+                      onAssignCity(msg.id, e.target.value || null)
+                    }
+                    className="w-full cursor-pointer rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-xs text-gray-700 outline-none hover:border-[#075E54] focus:border-[#075E54]"
+                  >
+                    <option value="">بدون مدينة</option>
+                    {cities.map((city) => (
+                      <option key={city.id} value={city.id}>
+                        {city.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="mt-1 flex justify-end">
                 <span className="text-[10px] text-gray-500 uppercase">
                   {formatTime(msg.receivedAt)}
