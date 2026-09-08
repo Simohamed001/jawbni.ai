@@ -25,7 +25,7 @@ export function DashboardNav() {
   }
 
   return (
-    <nav className="hidden gap-3 text-sm md:flex items-center">
+    <nav className="flex min-w-0 items-center gap-2 overflow-x-auto text-xs sm:gap-3 sm:text-sm">
       <Link href="/dashboard/inbox" className="flex items-center gap-1 hover:underline">
         <Inbox className="h-4 w-4" />
         الرسائل
