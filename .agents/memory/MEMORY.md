@@ -1,0 +1,1 @@
+- [Gemini classification runtime](gemini-classification.md) — classification depends on the GEMINI_API_KEY secret and per-model free-tier rotation.

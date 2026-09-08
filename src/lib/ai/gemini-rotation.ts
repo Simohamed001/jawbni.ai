@@ -17,16 +17,19 @@ const AUDIO_FALLBACK_MODELS = [
   "gemini-3.1-flash-lite",
 ];
 
-const MAX_REQUESTS_PER_MODEL = 20;
+// Gemini's free tier currently allows five requests per model per minute.
+// Rotate before the sixth request so the second classification pass does not
+// exhaust the active model immediately.
+const MAX_REQUESTS_PER_MODEL = 5;
 
 // تتبّع الطلبات لكل نموذج (يفترض أن العملية تبدأ من جديد لكل طلب)
 const requestCounts = new Map<string, number>();
 
 function getApiKey(): string {
-  const key = process.env.GOOGLE_AI_API_KEY;
+  const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY;
   if (!key || key === "YOUR_GEMINI_API_KEY_HERE" || key.trim() === "") {
     throw new Error(
-      "GOOGLE_AI_API_KEY is not set. Add it to your .env file.",
+      "GEMINI_API_KEY is not set. Add it to the Replit Secrets.",
     );
   }
   return key;
@@ -68,7 +71,7 @@ export function getRotationStatus() {
 }
 
 export function isGeminiConfigured(): boolean {
-  const key = process.env.GOOGLE_AI_API_KEY;
+  const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY;
   return !!key && key !== "YOUR_GEMINI_API_KEY_HERE" && key.trim() !== "";
 }
 
@@ -99,4 +102,36 @@ export function getAudioModelCandidates(): string[] {
   const afterCurrent = GEMINI_MODELS.slice(currentModelIndex + 1);
   const unique = Array.from(new Set([current, ...afterCurrent, ...AUDIO_FALLBACK_MODELS]));
   return unique;
+}
+
+export function getTextModelCandidates(): string[] {
+  const current = GEMINI_MODELS[currentModelIndex];
+  const afterCurrent = GEMINI_MODELS.slice(currentModelIndex + 1);
+  return Array.from(new Set([current, ...afterCurrent, ...GEMINI_MODELS]));
+}
+
+/**
+ * Try the available text models in rotation. This is especially important
+ * when the free-tier quota for one model has been exhausted.
+ */
+export async function generateTextContent(
+  prompt: string,
+  jsonOutput = false,
+) {
+  let lastError: unknown;
+
+  for (const modelName of getTextModelCandidates()) {
+    try {
+      const model = getGeminiClient(modelName, jsonOutput);
+      recordRequest(modelName);
+      return await model.generateContent(prompt);
+    } catch (error) {
+      lastError = error;
+      console.warn(`[Gemini] Model ${modelName} failed; trying the next model`);
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("All Gemini text models failed");
 }

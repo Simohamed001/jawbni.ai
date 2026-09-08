@@ -9,9 +9,7 @@ import {
 } from "@/lib/ai/prompt";
 import { UNDEFINED_LABEL } from "@/lib/utils";
 import {
-  getGeminiClient,
-  recordRequest,
-  getCurrentModel,
+  generateTextContent,
 } from "@/lib/ai/gemini-rotation";
 import { transcribeAudio, generateFromVoicePrompt } from "@/lib/ai/transcribe";
 import { classificationCache, audioCache } from "@/lib/ai/cache";
@@ -73,120 +71,6 @@ function formatProducts(products: MerchantContext["products"]) {
     .join("\n");
 }
 
-/**
- * مطابقة بالكلمات المفتاحية (عربي + فرانكو/فرنسية).
- * تُستخدم كاحتياط عند فشل نموذج AI، وكتصحيح override
- * عندما يتعارض ناتج AI مع إشارة كلمة مفتاحية قوية (خصوصاً سؤال السعر/المنتج).
- * ترتيب الأسبقية مهم: السؤال قبل الشكوى لأن الاستفسار أرجح في الفرانكو.
- */
-function simpleCategoryFallback(text: string): string | null {
-  const lower = text.toLowerCase();
-
-  // 1) سؤال عن منتج/سعر — أرجح في الفرانكو عند وجود صيغة سؤال
-  const priceQuery =
-    lower.includes("chhal") ||
-    lower.includes("taman") ||
-    lower.includes("thman") ||
-    lower.includes("bkam") ||
-    lower.includes("كم") ||
-    lower.includes("بكم") ||
-    lower.includes("الثمن") ||
-    lower.includes("sman");
-  const question =
-    lower.includes("kifach") ||
-    lower.includes("kifesh") ||
-    lower.includes("comment") ||
-    lower.includes("كيف") ||
-    lower.includes("cmmt") ||
-    lower.includes("wash") ||
-    lower.includes("wach") ||
-    lower.includes("واش") ||
-    lower.includes("ach") ||
-    lower.includes("achhad") ||
-    lower.includes("؟") ||
-    lower.includes("كيفاش") ||
-    lower.includes("fin") ||
-    lower.includes("فين");
-  const productWord =
-    lower.includes("produit") ||
-    lower.includes("منتوج") ||
-    lower.includes("المنتج") ||
-    lower.includes("حاجة") ||
-    lower.includes("chlor") ||
-    lower.includes("عطر") ||
-    lower.includes("ga3 merasa") ||
-    lower.includes("is3mi");
-  if (priceQuery || (question && productWord)) {
-    return "أسئلة عن المنتج";
-  }
-
-  // 2) تأكيد/طلب شراء
-  if (
-    lower.includes("confirm") ||
-    lower.includes("تأكيد") ||
-    lower.includes("commande") ||
-    lower.includes("command") ||
-    lower.includes("ncommandi") ||
-    lower.includes("bghit ncommandi") ||
-    lower.includes("nchri") ||
-    lower.includes("طلباتي") ||
-    lower.includes("askfor") ||
-    lower.includes("order")
-  ) {
-    return "التأكيد";
-  }
-
-  // 3) الشحن والتوصيل (عربي + فرانكو)
-  if (
-    lower.includes("livraison") ||
-    lower.includes("tawssil") ||
-    lower.includes("twselni") ||
-    lower.includes("wsselni") ||
-    lower.includes("wslni") ||
-    lower.includes("توصيل") ||
-    lower.includes("الشحن") ||
-    lower.includes("شحن") ||
-    lower.includes("shipping") ||
-    lower.includes("liver") ||
-    lower.includes("tliver") ||
-    lower.includes("كيفاش توصيل") ||
-    lower.includes("استلام") ||
-    lower.includes("stilam")
-  ) {
-    return "الشحن والتوصيل";
-  }
-
-  // 4) الشكاوى / المشاكل (فرانكو شائعة)
-  if (
-    lower.includes("mchkel") ||
-    lower.includes("moushkil") ||
-    lower.includes("muchkil") ||
-    lower.includes("3ndi problem") ||
-    lower.includes("3lach") ||
-    lower.includes("problème") ||
-    lower.includes("problme") ||
-    lower.includes("probl") ||
-    lower.includes("مشكلة") ||
-    lower.includes("شكوى") ||
-    lower.includes("plainte") ||
-    lower.includes("bug") ||
-    lower.includes("erreur") ||
-    lower.includes("خطأ") ||
-    lower.includes("مكسور") ||
-    lower.includes("تالف") ||
-    lower.includes("mchi kifach") ||
-    lower.includes("ma khdam") ||
-    lower.includes("khdamch") ||
-    lower.includes("ma khdem") ||
-    lower.includes("rokib") ||
-    lower.includes("عرص")
-  ) {
-    return "الشكاوى أو المشاكل";
-  }
-
-  return null;
-}
-
 export async function classifyMessage(merchantId: string, messageText: string) {
   // Check cache first
   const cachedResult = classificationCache.get(messageText, merchantId);
@@ -228,9 +112,7 @@ export async function classifyMessage(merchantId: string, messageText: string) {
 
     try {
       console.log("[Text Classification] Attempting Gemini classification for:", messageText.substring(0, 100));
-      const model = getGeminiClient();
-      recordRequest(getCurrentModel());
-      const result = await model.generateContent(systemPrompt);
+      const result = await generateTextContent(systemPrompt);
       const raw = result.response.text();
       rawAiResponse = raw;
       console.log("[Text Classification] FULL Gemini raw response:", rawAiResponse);
@@ -258,20 +140,9 @@ export async function classifyMessage(merchantId: string, messageText: string) {
       }
     } catch (error) {
       console.error("[Text Classification] Gemini classification error:", error);
-      console.log("[Text Classification] Falling back to simple category matching (no product keyword matching)");
-      // Fallback to simple category matching only (no product keyword matching to avoid misclassification)
-      const fallbackCategory = simpleCategoryFallback(lower);
-      if (fallbackCategory) {
-        parsed = {
-          mainCategory: fallbackCategory,
-          subCategory: UNDEFINED_LABEL,
-          product: UNDEFINED_LABEL,
-        };
-        console.log("[Text Classification] Fallback matched:", fallbackCategory);
-      } else {
-        console.log("[Text Classification] No category matched, using review category");
-      }
-      // If no keywords match, keep default (review category)
+      console.log(
+        "[Text Classification] Keeping the review category because AI classification failed",
+      );
     }
 
     // Override: نصوّب ناتج AI فقط إذا كان التصنيف غير موجود أصلاً في قاعدة البيانات
@@ -281,12 +152,11 @@ export async function classifyMessage(merchantId: string, messageText: string) {
     const aiCategoryInvalid = aiCategoryId === null;
 
     if (aiCategoryInvalid) {
-      const keywordCategory = simpleCategoryFallback(lower);
       console.log(
-        `[Text Classification] AI category '${aiCategory}' not found in DB, keyword fallback: '${keywordCategory}'`,
+        `[Text Classification] AI category '${aiCategory}' not found in DB; using review category`,
       );
       parsed = {
-        mainCategory: keywordCategory || reviewCategory.name,
+        mainCategory: reviewCategory.name,
         subCategory: UNDEFINED_LABEL,
         product: UNDEFINED_LABEL,
       };
@@ -433,20 +303,6 @@ export async function classifyVoiceMessage(
     subCategory: classification.subCategoryName,
     productName: classification.productName,
   });
-
-  // إن وصل لـ "تحتاج مراجعة"، نجرّب المطابقة بالكلمات المفتاحية أولاً
-  if (classification.mainCategoryName === reviewCategory.name) {
-    const fallbackCategory = simpleCategoryFallback(transcription);
-    if (fallbackCategory) {
-      console.log("[Voice Classification] Applying simple keyword fallback:", fallbackCategory);
-      const parsed = {
-        mainCategory: fallbackCategory,
-        subCategory: UNDEFINED_LABEL,
-        product: UNDEFINED_LABEL,
-      };
-      classification = mapParsedClassification(parsed, ctx, reviewCategory, null);
-    }
-  }
 
   // تخزين النتيجة الصوتية في cache
   classificationCache.set(transcription, merchantId, classification);

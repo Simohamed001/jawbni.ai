@@ -1,9 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { matchCategoryId } from "@/lib/ai/prompt";
 import {
-  getCurrentModel,
-  getGeminiClient,
-  recordRequest,
+  generateTextContent,
 } from "@/lib/ai/gemini-rotation";
 import { UNDEFINED_LABEL } from "@/lib/utils";
 
@@ -155,10 +153,9 @@ export async function detectAdditionalClassifications(
   }));
 
   try {
-    const model = getGeminiClient(undefined, true);
-    recordRequest(getCurrentModel());
-    const response = await model.generateContent(
+    const response = await generateTextContent(
       buildAnalysisPrompt(text, primary, categories, products),
+      true,
     );
     const raw = response.response.text();
     const parsed = extractJsonObject(raw);
