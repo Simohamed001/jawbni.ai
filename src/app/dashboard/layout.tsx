@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { auth } from "@/lib/auth";
-import { redirect } from "next/navigation";
 import { signOut } from "@/lib/auth";
 import { DashboardNav } from "@/components/dashboard-nav";
 
@@ -10,7 +9,6 @@ export default async function DashboardLayout({
   children: React.ReactNode;
 }) {
   const session = await auth();
-  if (!session?.user) redirect("/login");
 
   return (
     <div className="flex min-h-screen flex-col" dir="rtl">
@@ -21,16 +19,22 @@ export default async function DashboardLayout({
           </Link>
           <DashboardNav />
         </div>
-        <form
-          action={async () => {
-            "use server";
-            await signOut({ redirectTo: "/login" });
-          }}
-        >
-          <button type="submit" className="text-sm hover:underline">
-            خروج ({session.user.email})
-          </button>
-        </form>
+        {session?.user ? (
+          <form
+            action={async () => {
+              "use server";
+              await signOut({ redirectTo: "/login" });
+            }}
+          >
+            <button type="submit" className="text-sm hover:underline">
+              خروج ({session.user.email})
+            </button>
+          </form>
+        ) : (
+          <Link href="/login" className="text-sm hover:underline">
+            تسجيل الدخول
+          </Link>
+        )}
       </header>
       <main className="flex-1">{children}</main>
     </div>
