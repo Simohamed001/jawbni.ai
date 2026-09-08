@@ -2,12 +2,10 @@
 
 import { signIn } from "next-auth/react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button, Input } from "@/components/ui/button";
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("demo@jawbni.ai");
   const [password, setPassword] = useState("demo1234");
   const [error, setError] = useState("");
@@ -27,10 +25,14 @@ export default function LoginPage() {
       setError("بيانات الدخول غير صحيحة");
       return;
     }
-    if (res?.ok) {
-      router.push("/dashboard/inbox");
-      router.refresh();
+    if (!res?.ok) {
+      setError("تعذر تسجيل الدخول، حاول مرة أخرى");
+      return;
     }
+
+    // A full navigation guarantees that the new session cookie is read
+    // before the protected dashboard is rendered.
+    window.location.assign("/dashboard/inbox");
   }
 
   return (
