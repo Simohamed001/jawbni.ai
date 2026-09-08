@@ -131,6 +131,8 @@ model Message {
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
   merchant      MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  cityId        String?
+  city          DeliveryCity?  @relation(fields: [cityId], references: [id], onDelete: SetNull)
   additionalClassifications String?
   classification Classification?
   additionalClassificationRecords AdditionalClassification[]
@@ -192,4 +194,5 @@ model DeliveryCity {
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  messages  Message[]
 }
