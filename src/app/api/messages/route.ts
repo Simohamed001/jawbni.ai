@@ -24,10 +24,12 @@ export async function GET(request: NextRequest) {
     const subCategoryId = searchParams.get("subCategoryId");
     const productName = searchParams.get("productName");
     const q = searchParams.get("q");
+    const citySlug = searchParams.get("citySlug");
 
     const messages = await prisma.message.findMany({
       where: {
         merchantId,
+        ...(citySlug ? { city: { slug: citySlug } } : {}),
         ...(q
           ? {
               OR: [
@@ -189,6 +191,7 @@ export async function POST(request: NextRequest) {
         merchantId,
         customerName,
         body,
+        cityId: classification.cityId ?? null,
         messageType,
         audioPath,
         transcription,
@@ -210,6 +213,7 @@ export async function POST(request: NextRequest) {
         classification: {
           include: { mainCategory: true, subCategory: true },
         },
+        city: true,
       },
     });
 

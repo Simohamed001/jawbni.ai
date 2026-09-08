@@ -5,6 +5,8 @@ import {
   buildVoiceSystemPrompt,
   classificationSchema,
   matchCategoryId,
+  matchCityId,
+  findCityInText,
   type MerchantContext,
 } from "@/lib/ai/prompt";
 import { UNDEFINED_LABEL } from "@/lib/utils";
@@ -17,7 +19,8 @@ import { classificationCache, audioCache } from "@/lib/ai/cache";
 export { transcribeAudio };
 
 async function loadMerchantContext(merchantId: string): Promise<MerchantContext> {
-  const [mainCategories, subCategories, products, review, merchant] = await Promise.all([
+  const [mainCategories, subCategories, products, review, merchant, deliveryCities] =
+    await Promise.all([
     prisma.mainCategory.findMany({
       where: { merchantId },
       orderBy: { sortOrder: "asc" },
@@ -42,6 +45,11 @@ async function loadMerchantContext(merchantId: string): Promise<MerchantContext>
       where: { id: merchantId },
       select: { singleProduct: true },
     }),
+    prisma.deliveryCity.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    }),
   ]);
 
   return {
@@ -58,6 +66,7 @@ async function loadMerchantContext(merchantId: string): Promise<MerchantContext>
     })),
     reviewCategoryName: review.name,
     singleProduct: merchant?.singleProduct || false,
+    deliveryCities,
   };
 }
 
@@ -88,6 +97,7 @@ export async function classifyMessage(merchantId: string, messageText: string) {
     mainCategory: reviewCategory.name,
     subCategory: UNDEFINED_LABEL,
     product: UNDEFINED_LABEL,
+    deliveryCity: UNDEFINED_LABEL as string,
   };
   let rawAiResponse: string | null = null;
 
@@ -106,8 +116,8 @@ export async function classifyMessage(merchantId: string, messageText: string) {
         subCategoryName: UNDEFINED_LABEL,
       };
       // Cache the result
-      classificationCache.set(messageText, merchantId, result);
-      return result;
+      classificationCache.set(messageText, merchantId, { ...result, cityId: null });
+      return { ...result, cityId: null };
     }
 
     try {
@@ -132,6 +142,11 @@ export async function classifyMessage(merchantId: string, messageText: string) {
           product:
             typeof json.product === "string"
               ? json.product
+              : UNDEFINED_LABEL,
+          deliveryCity:
+            typeof json.deliveryCity === "string" &&
+            json.deliveryCity !== UNDEFINED_LABEL
+              ? json.deliveryCity
               : UNDEFINED_LABEL,
         });
         console.log("[Text Classification] Successfully parsed Gemini classification:", parsed);
@@ -159,6 +174,7 @@ export async function classifyMessage(merchantId: string, messageText: string) {
         mainCategory: reviewCategory.name,
         subCategory: UNDEFINED_LABEL,
         product: UNDEFINED_LABEL,
+        deliveryCity: UNDEFINED_LABEL,
       };
       rawAiResponse = null;
     }
@@ -166,7 +182,25 @@ export async function classifyMessage(merchantId: string, messageText: string) {
     console.log("[Text Classification] Empty message text, using review category");
   }
 
-let result = mapParsedClassification(parsed, ctx, reviewCategory, rawAiResponse);
+  // ربط المدينة تلقائياً: ناتج Gemini أولاً، ثم بحث نصي داخل الرسالة كشبكة أمان
+  const baseClassification = mapParsedClassification(
+    parsed,
+    ctx,
+    reviewCategory,
+    rawAiResponse,
+  );
+  const aiCityId =
+    parsed.deliveryCity && parsed.deliveryCity !== UNDEFINED_LABEL
+      ? matchCityId(parsed.deliveryCity, ctx.deliveryCities)
+      : null;
+  const cityId =
+    aiCityId ?? findCityInText(messageText, ctx.deliveryCities);
+  let result = { ...baseClassification, cityId };
+  if (cityId) {
+    console.log(
+      `[Text Classification] Linked delivery city: ${ctx.deliveryCities.find((c) => c.id === cityId)?.name}`,
+    );
+  }
   const returnsCategory = ctx.mainCategories.find((category) => category.name === "المرتجعات");
   if (returnsCategory && /رجع|ارجاع|إرجاع|مرتجع|استبدال|nrj3|nرجع|return|retour/i.test(messageText)) {
     result = {
@@ -224,6 +258,7 @@ export async function reviewFallback(merchantId: string) {
     rawAiResponse: null,
     mainCategoryName: reviewCategory.name,
     subCategoryName: UNDEFINED_LABEL,
+    cityId: null as string | null,
   };
 }
 
@@ -263,12 +298,23 @@ export async function classifyVoiceMessage(
             typeof json.subCategory === "string" ? json.subCategory : UNDEFINED_LABEL,
           product:
             typeof json.product === "string" ? json.product : UNDEFINED_LABEL,
+          deliveryCity:
+            typeof json.deliveryCity === "string" && json.deliveryCity !== UNDEFINED_LABEL
+              ? json.deliveryCity
+              : UNDEFINED_LABEL,
         }
       : null;
 
     if (parsed && parsedTranscription) {
       console.log("[Voice Classification] Direct voice classification succeeded:", parsed);
-      const classification = mapParsedClassification(parsed, ctx, reviewCategory, voiceResult.raw);
+      const voiceCityId =
+        (parsed.deliveryCity && parsed.deliveryCity !== UNDEFINED_LABEL
+          ? matchCityId(parsed.deliveryCity, ctx.deliveryCities)
+          : null) ?? findCityInText(parsedTranscription, ctx.deliveryCities);
+      const classification = {
+        ...mapParsedClassification(parsed, ctx, reviewCategory, voiceResult.raw),
+        cityId: voiceCityId,
+      };
       classificationCache.set(parsedTranscription, merchantId, classification);
       audioCache.set(audioFilePath, merchantId, parsedTranscription, classification);
       return {

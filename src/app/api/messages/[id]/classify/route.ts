@@ -64,6 +64,8 @@ export async function POST(
       where: { id },
       data: {
         status: "classified",
+        // لا نمسح ربطاً يدوياً موجوداً — نحدّث المدينة فقط إذا تعرف عليها Gemini
+        ...(result.cityId ? { cityId: result.cityId } : {}),
         additionalClassifications: additionalClassifications.length
           ? JSON.stringify(additionalClassifications)
           : null,
@@ -129,6 +131,8 @@ export async function PATCH(
     const updated = await prisma.message.update({
       where: { id },
       data: {
+        // تحديث المدينة فقط إذا تعرف عليها Gemini (وإلا نبقي الربط الحالي)
+        ...(result.cityId ? { cityId: result.cityId } : {}),
         transcription,
         body: transcription || "🎤 رسالة صوتية",
         additionalClassifications: additionalClassifications.length
