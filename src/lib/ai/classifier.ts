@@ -201,6 +201,7 @@ export async function classifyMessage(merchantId: string, messageText: string) {
       `[Text Classification] Linked delivery city: ${ctx.deliveryCities.find((c) => c.id === cityId)?.name}`,
     );
   }
+  result = await applyShippingCitySubCategory(merchantId, ctx, result);
   const returnsCategory = ctx.mainCategories.find((category) => category.name === "المرتجعات");
   if (returnsCategory && /رجع|ارجاع|إرجاع|مرتجع|استبدال|nrj3|nرجع|return|retour/i.test(messageText)) {
     result = {
@@ -216,6 +217,47 @@ export async function classifyMessage(merchantId: string, messageText: string) {
   classificationCache.set(messageText, merchantId, result);
 
   return result;
+}
+
+const SHIPPING_CATEGORY_NAME = "الشحن والتوصيل";
+
+// المدينة تصبح القسم الفرعي الفعلي لرسائل الشحن والتوصيل — لا يوجد تصنيف يدوي،
+// كل شيء يمر عبر Gemini. إذا لم تُذكر مدينة، تبقى الرسالة تحت "غير محدد" فعلاً.
+async function applyShippingCitySubCategory<
+  T extends { mainCategoryId: string; subCategoryId: string | null; subCategoryName: string; cityId: string | null },
+>(merchantId: string, ctx: MerchantContext, result: T): Promise<T> {
+  const shippingCategory = ctx.mainCategories.find((c) => c.name === SHIPPING_CATEGORY_NAME);
+  if (!shippingCategory || result.mainCategoryId !== shippingCategory.id) {
+    return result;
+  }
+
+  if (!result.cityId) {
+    return { ...result, subCategoryId: null, subCategoryName: UNDEFINED_LABEL };
+  }
+
+  const city = ctx.deliveryCities.find((c) => c.id === result.cityId);
+  if (!city) {
+    return { ...result, subCategoryId: null, subCategoryName: UNDEFINED_LABEL };
+  }
+
+  const subCategory = await prisma.subCategory.upsert({
+    where: {
+      merchantId_name_mainCategoryId: {
+        merchantId,
+        name: city.name,
+        mainCategoryId: shippingCategory.id,
+      },
+    },
+    update: {},
+    create: {
+      merchantId,
+      mainCategoryId: shippingCategory.id,
+      name: city.name,
+      sortOrder: 0,
+    },
+  });
+
+  return { ...result, subCategoryId: subCategory.id, subCategoryName: subCategory.name };
 }
 
 function mapParsedClassification(
@@ -311,10 +353,10 @@ export async function classifyVoiceMessage(
         (parsed.deliveryCity && parsed.deliveryCity !== UNDEFINED_LABEL
           ? matchCityId(parsed.deliveryCity, ctx.deliveryCities)
           : null) ?? findCityInText(parsedTranscription, ctx.deliveryCities);
-      const classification = {
+      const classification = await applyShippingCitySubCategory(merchantId, ctx, {
         ...mapParsedClassification(parsed, ctx, reviewCategory, voiceResult.raw),
         cityId: voiceCityId,
-      };
+      });
       classificationCache.set(parsedTranscription, merchantId, classification);
       audioCache.set(audioFilePath, merchantId, parsedTranscription, classification);
       return {
