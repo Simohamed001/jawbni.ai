@@ -8,6 +8,7 @@ interface CacheEntry {
     rawAiResponse: string | null;
     mainCategoryName: string;
     subCategoryName: string;
+    cityId: string | null;
   };
   timestamp: number;
 }
@@ -21,6 +22,7 @@ interface AudioCacheEntry {
     rawAiResponse: string | null;
     mainCategoryName: string;
     subCategoryName: string;
+    cityId: string | null;
   };
   timestamp: number;
 }
@@ -150,6 +152,7 @@ class AudioCache {
     rawAiResponse: string | null;
     mainCategoryName: string;
     subCategoryName: string;
+    cityId: string | null;
   }): void {
     const key = this.generateKey(filePath, merchantId);
 

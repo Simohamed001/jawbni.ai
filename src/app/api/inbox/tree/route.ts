@@ -145,30 +145,35 @@ export async function GET() {
         }
       } else {
         // Single product mode or no products - show subcategories directly
-        const subNodes: TreeNode[] = main.subCategories.map((sub) => ({
-          id: `${main.id}-sub-${sub.id}`,
-          label: sub.name,
-          type: "sub" as const,
+        // نعرض فقط الأقسام الفرعية (بما فيها المدن لقسم الشحن والتوصيل) التي صُنفت إليها رسالة واحدة على الأقل
+        const subNodes: TreeNode[] = main.subCategories
+          .map((sub) => ({
+            id: `${main.id}-sub-${sub.id}`,
+            label: sub.name,
+            type: "sub" as const,
             count: mainMessages.filter(
               (m) => getMessageClassifications(m).some((item) => item.subCategoryId === sub.id),
             ).length,
-          mainCategoryId: main.id,
-          productName: UNDEFINED_LABEL,
-          subCategoryId: sub.id,
-        }));
+            mainCategoryId: main.id,
+            productName: UNDEFINED_LABEL,
+            subCategoryId: sub.id,
+          }))
+          .filter((sub) => sub.count > 0);
 
         const undefinedCount = mainMessages.filter(
           (m) => getMessageClassifications(m).some((item) => !item.subCategoryId),
         ).length;
 
-        subNodes.push({
-          id: `${main.id}-sub-undefined`,
-          label: UNDEFINED_LABEL,
-          type: "sub",
-          count: undefinedCount,
-          mainCategoryId: main.id,
-          productName: UNDEFINED_LABEL,
-        });
+        if (undefinedCount > 0 || subNodes.length === 0) {
+          subNodes.push({
+            id: `${main.id}-sub-undefined`,
+            label: UNDEFINED_LABEL,
+            type: "sub",
+            count: undefinedCount,
+            mainCategoryId: main.id,
+            productName: UNDEFINED_LABEL,
+          });
+        }
 
         children.push(...subNodes);
       }

@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -131,6 +131,8 @@ model Message {
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
   merchant      MerchantProfile @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  cityId        String?
+  city          DeliveryCity?  @relation(fields: [cityId], references: [id], onDelete: SetNull)
   additionalClassifications String?
   classification Classification?
   additionalClassificationRecords AdditionalClassification[]
@@ -182,4 +184,15 @@ model GroupReply {
   subCategory    SubCategory?    @relation(fields: [subCategoryId], references: [id])
 
   @@unique([merchantId, mainCategoryId, productId, subCategoryId])
+}
+
+/// مدن الشحن المتاحة للتوصيل
+model DeliveryCity {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  messages  Message[]
 }

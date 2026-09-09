@@ -4,6 +4,7 @@ export const classificationSchema = z.object({
   mainCategory: z.string(),
   subCategory: z.string(),
   product: z.string(),
+  deliveryCity: z.string(),
 });
 
 export type ClassificationResult = z.infer<typeof classificationSchema>;
@@ -17,8 +18,15 @@ export interface MerchantContext {
     mainCategoryName: string | null;
   }[];
   products: { officialName: string; keywords: string[] }[];
+  deliveryCities: { id: string; name: string }[];
   reviewCategoryName: string;
   singleProduct: boolean;
+}
+
+function citiesBlock(ctx: MerchantContext) {
+  return ctx.deliveryCities.length
+    ? `\n** مدن التوصيل المتاحة لديك:\n${ctx.deliveryCities.map((c) => `|- ${c.name}`).join("\n")}\n|- إذا سأل الزبون عن التوصيل أو الشحن إلى مدينة موجودة في القائمة أعلاه، أرجع اسمها **كما هو مكتوب في القائمة تماماً** في الحقل deliveryCity\n|- إذا لم تذكر الرسالة مدينة، أو كانت المدينة غير موجودة في القائمة، أرجع "غير محدد" في الحقل deliveryCity\n`
+    : `\n|- لا توجد مدن توصيل مسجلة: أرجع دائماً "غير محدد" في الحقل deliveryCity\n`;
 }
 
 function classificationRules(ctx: MerchantContext, formattedProducts: string) {
@@ -36,7 +44,7 @@ function classificationRules(ctx: MerchantContext, formattedProducts: string) {
 |- هذا التاجر يبيع عدة منتجات
 |- إذا كانت الرسالة استفساراً فعلياً عن منتج معين، حدد المنتج بدقة`;
 
-  return `أنت نظام تصنيف ذكي للمحادثات للتجار المغاربة، تفهم الدارجة المغربية بجميع صيغها (عربية، Franco، Arabizi) والفرنسية والعربية.
+return `أنت نظام تصنيف ذكي للمحادثات للتجار المغاربة، تفهم الدارجة المغربية بجميع صيغها (عربية، Franco، Arabizi) والفرنسية والعربية.
 
 ** التصنيفات الرئيسية الثابتة:
 -- الشكاوى أو المشاكل
@@ -89,11 +97,14 @@ export function buildSystemPrompt(
 ) {
   return `${classificationRules(ctx, formattedProducts)}
 
+${citiesBlock}
+${citiesBlock(ctx)}
 ** القيمة المخرجة (JSON فقط):
 {
   "mainCategory": "اسم القسم الرئيسي",
   "subCategory": "القسم الفرعي أو غير محدد",
-  "product": "اسم المنتج الرسمي من القائمة أو غير محدد"
+  "product": "اسم المنتج الرسمي من القائمة أو غير محدد",
+  "deliveryCity": "اسم مدينة التوصيل من القائمة أو غير محدد"
 }
 
 ** الرسالة المراد تصنيفها الآن:
@@ -108,12 +119,15 @@ export function buildVoiceSystemPrompt(
 
 استمع للتسجيل الصوتي كاملاً. المتحدث زبون مغربي قد يستخدم الدارجة أو العربية أو الفرنسية أو مزيجاً منها.
 
+${citiesBlock}
+${citiesBlock(ctx)}
 ** القيمة المخرجة (JSON فقط):
 {
   "transcription": "النص المفرّغ حرفياً من الصوت",
   "mainCategory": "اسم القسم الرئيسي",
   "subCategory": "القسم الفرعي أو غير محدد",
-  "product": "اسم المنتج الرسمي من القائمة أو غير محدد"
+  "product": "اسم المنتج الرسمي من القائمة أو غير محدد",
+  "deliveryCity": "اسم مدينة التوصيل من القائمة أو غير محدد"
 }`;
 }
 
@@ -132,4 +146,44 @@ export function matchCategoryId(
       normalized.includes(c.name.trim().toLowerCase())
   );
   return partial?.id ?? null;
+}
+
+export function matchCityId(
+  name: string,
+  cities: { id: string; name: string }[],
+): string | null {
+  const normalized = name.trim().toLowerCase().replace(/\s+/g, " ");
+  const exact = cities.find(
+    (c) => c.name.trim().toLowerCase().replace(/\s+/g, " ") === normalized,
+  );
+  if (exact) return exact.id;
+  return null;
+}
+
+/**
+ * مطابقة اسم مدينة داخل نص الرسالة (شبكة أمان محلية إذا لم يتعرف Gemini).
+ * نستعمل حدود كلمات حتى لا تتطابق "سلا" مثلاً داخل "سلالة".
+ */
+export function findCityInText(
+  text: string,
+  cities: { id: string; name: string }[],
+): string | null {
+  const norm = text.toLowerCase().replace(/[\s\u0640]+/g, " ").trim();
+  for (const city of cities) {
+    const name = city.name.trim().toLowerCase().replace(/[\s\u0640]+/g, " ");
+    if (!name) continue;
+    // نبني صيغتي الاسم: كاملة، ومجردة من "ال" التعريف (المعتادة بعد حرف الجر)
+    const variants = new Set([name]);
+    if (name.startsWith("ال")) variants.add(name.slice(2));
+    for (const variant of variants) {
+      const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // يُسمح قبل الاسم بحدود كلمة أو بأدوات متصلة شائعة: ال، و، ف، ب، ل، ك + ال
+      const re = new RegExp(
+        `(^|[^\\p{L}\\p{N}])(?:ال|لل|[وفبلك](?:ال)?)?${escaped}(?![\\p{L}\\p{N}])`,
+        "u",
+      );
+      if (re.test(norm)) return city.id;
+    }
+  }
+  return null;
 }

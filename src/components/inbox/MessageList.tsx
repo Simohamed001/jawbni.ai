@@ -21,6 +21,13 @@ export interface MessageItem {
     subCategoryName?: string | null;
     productName: string;
   }>;
+  cityId?: string | null;
+  city?: { name: string; slug: string } | null;
+}
+
+export interface CityOption {
+  id: string;
+  name: string;
 }
 
 interface MessageListProps {
