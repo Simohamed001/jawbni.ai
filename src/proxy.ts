@@ -8,14 +8,16 @@ export function proxy(req: NextRequest) {
   const isApiAuth = pathname.startsWith("/api/auth");
   const isRegisterApi = pathname.startsWith("/api/register");
   const isDashboardPage = pathname.startsWith("/dashboard");
+  const isApiRoute = pathname.startsWith("/api");
   const isPublic =
     pathname === "/" ||
     isAuthPage ||
     isApiAuth ||
     isRegisterApi ||
-    isDashboardPage;
+    isDashboardPage ||
+    isApiRoute;
 
-  // Don't check auth for public routes
+  // Don't check auth for public routes and API routes
   if (isPublic) {
     return NextResponse.next();
   }

@@ -7,6 +7,7 @@ import {
   matchCategoryId,
   matchCityId,
   findCityInText,
+  citiesBlock,
   type MerchantContext,
 } from "@/lib/ai/prompt";
 import { UNDEFINED_LABEL } from "@/lib/utils";
@@ -80,7 +81,24 @@ function formatProducts(products: MerchantContext["products"]) {
     .join("\n");
 }
 
-export async function classifyMessage(merchantId: string, messageText: string) {
+export async function classifyMessage(merchantId: string, messageText: string): Promise<{
+  mainCategoryId: string;
+  subCategoryId: string | null;
+  productName: string;
+  rawAiResponse: string | null;
+  mainCategoryName: string;
+  subCategoryName: string;
+  cityId: string | null;
+  additionalIntents?: Array<{
+    mainCategoryId: string;
+    mainCategoryName: string;
+    subCategoryId: string | null;
+    subCategoryName: string;
+    productName: string;
+    rawAiResponse: string | null;
+    inferredByAi?: boolean;
+  }>;
+}> {
   // Check cache first
   const cachedResult = classificationCache.get(messageText, merchantId);
   if (cachedResult) {
@@ -91,13 +109,18 @@ export async function classifyMessage(merchantId: string, messageText: string) {
   const ctx = await loadMerchantContext(merchantId);
   const reviewCategory = await getReviewCategory(merchantId);
   const formattedProducts = formatProducts(ctx.products);
-  const systemPrompt = buildSystemPrompt(ctx, formattedProducts, messageText);
+  const citiesBlockText = citiesBlock(ctx);
+  const systemPrompt = buildSystemPrompt(ctx, formattedProducts, citiesBlockText, messageText);
 
   let parsed = {
-    mainCategory: reviewCategory.name,
-    subCategory: UNDEFINED_LABEL,
-    product: UNDEFINED_LABEL,
-    deliveryCity: UNDEFINED_LABEL as string,
+    intents: [
+      {
+        mainCategory: reviewCategory.name,
+        subCategory: UNDEFINED_LABEL,
+        product: UNDEFINED_LABEL,
+        deliveryCity: UNDEFINED_LABEL as string,
+      }
+    ]
   };
   let rawAiResponse: string | null = null;
 
@@ -122,36 +145,38 @@ export async function classifyMessage(merchantId: string, messageText: string) {
 
     try {
       console.log("[Text Classification] Attempting Gemini classification for:", messageText.substring(0, 100));
-      const result = await generateTextContent(systemPrompt);
+      const result = await generateTextContent(systemPrompt, true);
       const raw = result.response.text();
       rawAiResponse = raw;
       console.log("[Text Classification] FULL Gemini raw response:", rawAiResponse);
       console.log("[Text Classification] Gemini raw response parsed JSON:", extractJsonObject(rawAiResponse));
 
       const json = extractJsonObject(rawAiResponse);
-      if (json) {
+      if (json && Array.isArray(json.intents) && json.intents.length > 0) {
         parsed = classificationSchema.parse({
-          mainCategory:
-            typeof json.mainCategory === "string"
-              ? json.mainCategory
-              : reviewCategory.name,
-          subCategory:
-            typeof json.subCategory === "string"
-              ? json.subCategory
-              : UNDEFINED_LABEL,
-          product:
-            typeof json.product === "string"
-              ? json.product
-              : UNDEFINED_LABEL,
-          deliveryCity:
-            typeof json.deliveryCity === "string" &&
-            json.deliveryCity !== UNDEFINED_LABEL
-              ? json.deliveryCity
-              : UNDEFINED_LABEL,
+          intents: json.intents.map((intent: any) => ({
+            mainCategory:
+              typeof intent.mainCategory === "string"
+                ? intent.mainCategory
+                : reviewCategory.name,
+            subCategory:
+              typeof intent.subCategory === "string"
+                ? intent.subCategory
+                : UNDEFINED_LABEL,
+            product:
+              typeof intent.product === "string"
+                ? intent.product
+                : UNDEFINED_LABEL,
+            deliveryCity:
+              typeof intent.deliveryCity === "string" &&
+              intent.deliveryCity !== UNDEFINED_LABEL
+                ? intent.deliveryCity
+                : UNDEFINED_LABEL,
+          }))
         });
         console.log("[Text Classification] Successfully parsed Gemini classification:", parsed);
       } else {
-        console.warn("[Text Classification] No JSON found in Gemini response");
+        console.warn("[Text Classification] No valid intents array found in Gemini response");
       }
     } catch (error) {
       console.error("[Text Classification] Gemini classification error:", error);
@@ -162,7 +187,8 @@ export async function classifyMessage(merchantId: string, messageText: string) {
 
     // Override: نصوّب ناتج AI فقط إذا كان التصنيف غير موجود أصلاً في قاعدة البيانات
     // (مثلاً Gemini يرجع شيرو غير معروف). لا نلغي تصنيف AI صحيح فقط لأنه يختلف عن الكلمات المفتاحية.
-    const aiCategory = parsed.mainCategory;
+    const primaryIntent = parsed.intents[0];
+    const aiCategory = primaryIntent.mainCategory;
     const aiCategoryId = matchCategoryId(aiCategory, ctx.mainCategories);
     const aiCategoryInvalid = aiCategoryId === null;
 
@@ -171,10 +197,14 @@ export async function classifyMessage(merchantId: string, messageText: string) {
         `[Text Classification] AI category '${aiCategory}' not found in DB; using review category`,
       );
       parsed = {
-        mainCategory: reviewCategory.name,
-        subCategory: UNDEFINED_LABEL,
-        product: UNDEFINED_LABEL,
-        deliveryCity: UNDEFINED_LABEL,
+        intents: [
+          {
+            mainCategory: reviewCategory.name,
+            subCategory: UNDEFINED_LABEL,
+            product: UNDEFINED_LABEL,
+            deliveryCity: UNDEFINED_LABEL,
+          }
+        ]
       };
       rawAiResponse = null;
     }
@@ -183,15 +213,16 @@ export async function classifyMessage(merchantId: string, messageText: string) {
   }
 
   // ربط المدينة تلقائياً: ناتج Gemini أولاً، ثم بحث نصي داخل الرسالة كشبكة أمان
+  const primaryIntent = parsed.intents[0];
   const baseClassification = mapParsedClassification(
-    parsed,
+    primaryIntent,
     ctx,
     reviewCategory,
     rawAiResponse,
   );
   const aiCityId =
-    parsed.deliveryCity && parsed.deliveryCity !== UNDEFINED_LABEL
-      ? matchCityId(parsed.deliveryCity, ctx.deliveryCities)
+    primaryIntent.deliveryCity && primaryIntent.deliveryCity !== UNDEFINED_LABEL
+      ? matchCityId(primaryIntent.deliveryCity, ctx.deliveryCities)
       : null;
   const cityId =
     aiCityId ?? findCityInText(messageText, ctx.deliveryCities);
@@ -212,6 +243,31 @@ export async function classifyMessage(merchantId: string, messageText: string) {
       subCategoryName: UNDEFINED_LABEL,
     };
   }
+
+  // Add additional intents to the result
+  const additionalIntents = parsed.intents.slice(1).map(intent => {
+    const intentCategoryId = matchCategoryId(intent.mainCategory, ctx.mainCategories);
+    const intentCategory = ctx.mainCategories.find(c => c.id === intentCategoryId);
+    const subsForIntent = intentCategory ? ctx.subCategories.filter(s => s.mainCategoryId === intentCategoryId) : [];
+    let intentSubCategoryId: string | null = null;
+    if (intent.subCategory !== UNDEFINED_LABEL) {
+      intentSubCategoryId = matchCategoryId(intent.subCategory, subsForIntent);
+    }
+    return {
+      mainCategoryId: intentCategoryId || reviewCategory.id,
+      mainCategoryName: intentCategory?.name || reviewCategory.name,
+      subCategoryId: intentSubCategoryId,
+      subCategoryName: intentSubCategoryId
+        ? subsForIntent.find(s => s.id === intentSubCategoryId)?.name || UNDEFINED_LABEL
+        : UNDEFINED_LABEL,
+      productName: ctx.singleProduct ? UNDEFINED_LABEL : intent.product || UNDEFINED_LABEL,
+      rawAiResponse,
+      inferredByAi: true,
+    };
+  });
+
+  // Include additional intents in the result
+  result = { ...result, additionalIntents } as any;
 
   // Cache the result
   classificationCache.set(messageText, merchantId, result);
@@ -265,7 +321,14 @@ function mapParsedClassification(
   ctx: MerchantContext,
   reviewCategory: { id: string; name: string },
   rawAiResponse: string | null,
-) {
+): {
+  mainCategoryId: string;
+  subCategoryId: string | null;
+  productName: string;
+  rawAiResponse: string | null;
+  mainCategoryName: string;
+  subCategoryName: string;
+} {
   const mainCategoryId =
     matchCategoryId(parsed.mainCategory, ctx.mainCategories) ?? reviewCategory.id;
 
@@ -301,6 +364,7 @@ export async function reviewFallback(merchantId: string) {
     mainCategoryName: reviewCategory.name,
     subCategoryName: UNDEFINED_LABEL,
     cityId: null as string | null,
+    additionalIntents: [],
   };
 }
 
@@ -321,7 +385,8 @@ export async function classifyVoiceMessage(
   const ctx = await loadMerchantContext(merchantId);
   const reviewCategory = await getReviewCategory(merchantId);
   const formattedProducts = formatProducts(ctx.products);
-  const voicePrompt = buildVoiceSystemPrompt(ctx, formattedProducts);
+  const citiesBlockText = citiesBlock(ctx);
+  const voicePrompt = buildVoiceSystemPrompt(ctx, formattedProducts, citiesBlockText);
 
   console.log("[Voice Classification] Attempting direct Gemini voice classification");
 
@@ -332,36 +397,63 @@ export async function classifyVoiceMessage(
     const transcription = json && typeof json.transcription === "string" ? json.transcription : null;
     const parsedTranscription = transcription ? normalizeTranscriptForVoice(transcription) : null;
 
-    const parsed = json
-      ? {
+    let parsed = null;
+    if (json && Array.isArray(json.intents) && json.intents.length > 0) {
+      parsed = {
+        intents: json.intents.map((intent: any) => ({
           mainCategory:
-            typeof json.mainCategory === "string" ? json.mainCategory : reviewCategory.name,
+            typeof intent.mainCategory === "string" ? intent.mainCategory : reviewCategory.name,
           subCategory:
-            typeof json.subCategory === "string" ? json.subCategory : UNDEFINED_LABEL,
+            typeof intent.subCategory === "string" ? intent.subCategory : UNDEFINED_LABEL,
           product:
-            typeof json.product === "string" ? json.product : UNDEFINED_LABEL,
+            typeof intent.product === "string" ? intent.product : UNDEFINED_LABEL,
           deliveryCity:
-            typeof json.deliveryCity === "string" && json.deliveryCity !== UNDEFINED_LABEL
-              ? json.deliveryCity
+            typeof intent.deliveryCity === "string" && intent.deliveryCity !== UNDEFINED_LABEL
+              ? intent.deliveryCity
               : UNDEFINED_LABEL,
-        }
-      : null;
+        }))
+      };
+    }
 
     if (parsed && parsedTranscription) {
       console.log("[Voice Classification] Direct voice classification succeeded:", parsed);
+      const primaryIntent = parsed.intents[0];
       const voiceCityId =
-        (parsed.deliveryCity && parsed.deliveryCity !== UNDEFINED_LABEL
-          ? matchCityId(parsed.deliveryCity, ctx.deliveryCities)
+        (primaryIntent.deliveryCity && primaryIntent.deliveryCity !== UNDEFINED_LABEL
+          ? matchCityId(primaryIntent.deliveryCity, ctx.deliveryCities)
           : null) ?? findCityInText(parsedTranscription, ctx.deliveryCities);
       const classification = await applyShippingCitySubCategory(merchantId, ctx, {
-        ...mapParsedClassification(parsed, ctx, reviewCategory, voiceResult.raw),
+        ...mapParsedClassification(primaryIntent, ctx, reviewCategory, voiceResult.raw),
         cityId: voiceCityId,
       });
-      classificationCache.set(parsedTranscription, merchantId, classification);
-      audioCache.set(audioFilePath, merchantId, parsedTranscription, classification);
+
+      // Add additional intents to the classification
+      const additionalIntents = parsed.intents.slice(1).map(intent => {
+        const intentCategoryId = matchCategoryId(intent.mainCategory, ctx.mainCategories);
+        const intentCategory = ctx.mainCategories.find(c => c.id === intentCategoryId);
+        const subsForIntent = intentCategory ? ctx.subCategories.filter(s => s.mainCategoryId === intentCategoryId) : [];
+        let intentSubCategoryId: string | null = null;
+        if (intent.subCategory !== UNDEFINED_LABEL) {
+          intentSubCategoryId = matchCategoryId(intent.subCategory, subsForIntent);
+        }
+        return {
+          mainCategoryId: intentCategoryId || reviewCategory.id,
+          mainCategoryName: intentCategory?.name || reviewCategory.name,
+          subCategoryId: intentSubCategoryId,
+          subCategoryName: intentSubCategoryId
+            ? subsForIntent.find(s => s.id === intentSubCategoryId)?.name || UNDEFINED_LABEL
+            : UNDEFINED_LABEL,
+          productName: ctx.singleProduct ? UNDEFINED_LABEL : intent.product || UNDEFINED_LABEL,
+          rawAiResponse: voiceResult.raw,
+          inferredByAi: true,
+        };
+      });
+
+      classificationCache.set(parsedTranscription, merchantId, { ...classification, additionalIntents } as any);
+      audioCache.set(audioFilePath, merchantId, parsedTranscription, { ...classification, additionalIntents } as any);
       return {
         transcription: parsedTranscription,
-        classification,
+        classification: { ...classification, additionalIntents } as any,
       };
     }
   } catch (voiceError) {

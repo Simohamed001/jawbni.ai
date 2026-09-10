@@ -13,6 +13,7 @@ export type ClassificationLike = {
   mainCategoryName: string;
   subCategoryName: string;
   inferredByAi?: boolean;
+  additionalIntents?: ClassificationLike[];
 };
 
 type CategoryContext = {
@@ -124,12 +125,18 @@ ${productCatalog}
 /**
  * يترك قرار تعدد التصنيف لنموذج الذكاء الاصطناعي، مع التحقق من أن كل نتيجة
  * تطابق قسمًا أو منتجًا موجودًا لدى التاجر قبل حفظها.
+ * ملاحظة: مع النظام الجديد للتصنيف المتعدد، هذه الدالة تعمل كاحتياطي أو للتصنيفات الإضافية اليدوية.
  */
 export async function detectAdditionalClassifications(
   merchantId: string,
   text: string,
   primary: ClassificationLike,
 ) {
+  // If primary already has additional intents from the main classifier, return them
+  if (primary.additionalIntents && primary.additionalIntents.length > 0) {
+    return primary.additionalIntents;
+  }
+
   if (!text.trim() || text.trim() === "🎤 رسالة صوتية") return [];
 
   const [categories, rawProducts] = await Promise.all([
