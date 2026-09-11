@@ -95,6 +95,7 @@ export async function classifyMessage(merchantId: string, messageText: string): 
     subCategoryId: string | null;
     subCategoryName: string;
     productName: string;
+    cityId: string | null;
     rawAiResponse: string | null;
     inferredByAi?: boolean;
   }>;
@@ -220,12 +221,18 @@ export async function classifyMessage(merchantId: string, messageText: string): 
     reviewCategory,
     rawAiResponse,
   );
-  const aiCityId =
-    primaryIntent.deliveryCity && primaryIntent.deliveryCity !== UNDEFINED_LABEL
-      ? matchCityId(primaryIntent.deliveryCity, ctx.deliveryCities)
-      : null;
-  const cityId =
-    aiCityId ?? findCityInText(messageText, ctx.deliveryCities);
+
+  // Use the delivery city from the primary intent if it's specified
+  let cityId: string | null = null;
+  if (primaryIntent.deliveryCity && primaryIntent.deliveryCity !== UNDEFINED_LABEL) {
+    cityId = matchCityId(primaryIntent.deliveryCity, ctx.deliveryCities);
+  }
+
+  // Fallback: search for city in the full message text
+  if (!cityId) {
+    cityId = findCityInText(messageText, ctx.deliveryCities);
+  }
+
   let result = { ...baseClassification, cityId };
   if (cityId) {
     console.log(
@@ -244,7 +251,7 @@ export async function classifyMessage(merchantId: string, messageText: string): 
     };
   }
 
-  // Add additional intents to the result
+  // Add additional intents to the result, preserving their delivery cities
   const additionalIntents = parsed.intents.slice(1).map(intent => {
     const intentCategoryId = matchCategoryId(intent.mainCategory, ctx.mainCategories);
     const intentCategory = ctx.mainCategories.find(c => c.id === intentCategoryId);
@@ -253,6 +260,13 @@ export async function classifyMessage(merchantId: string, messageText: string): 
     if (intent.subCategory !== UNDEFINED_LABEL) {
       intentSubCategoryId = matchCategoryId(intent.subCategory, subsForIntent);
     }
+
+    // Preserve the delivery city from the intent if it's specified
+    let intentCityId: string | null = null;
+    if (intent.deliveryCity && intent.deliveryCity !== UNDEFINED_LABEL) {
+      intentCityId = matchCityId(intent.deliveryCity, ctx.deliveryCities);
+    }
+
     return {
       mainCategoryId: intentCategoryId || reviewCategory.id,
       mainCategoryName: intentCategory?.name || reviewCategory.name,
@@ -261,6 +275,7 @@ export async function classifyMessage(merchantId: string, messageText: string): 
         ? subsForIntent.find(s => s.id === intentSubCategoryId)?.name || UNDEFINED_LABEL
         : UNDEFINED_LABEL,
       productName: ctx.singleProduct ? UNDEFINED_LABEL : intent.product || UNDEFINED_LABEL,
+      cityId: intentCityId, // Preserve the city from the intent
       rawAiResponse,
       inferredByAi: true,
     };
@@ -427,7 +442,7 @@ export async function classifyVoiceMessage(
         cityId: voiceCityId,
       });
 
-      // Add additional intents to the classification
+      // Add additional intents to the classification, preserving their delivery cities
       const additionalIntents = parsed.intents.slice(1).map(intent => {
         const intentCategoryId = matchCategoryId(intent.mainCategory, ctx.mainCategories);
         const intentCategory = ctx.mainCategories.find(c => c.id === intentCategoryId);
@@ -436,6 +451,13 @@ export async function classifyVoiceMessage(
         if (intent.subCategory !== UNDEFINED_LABEL) {
           intentSubCategoryId = matchCategoryId(intent.subCategory, subsForIntent);
         }
+
+        // Preserve the delivery city from the intent if it's specified
+        let intentCityId: string | null = null;
+        if (intent.deliveryCity && intent.deliveryCity !== UNDEFINED_LABEL) {
+          intentCityId = matchCityId(intent.deliveryCity, ctx.deliveryCities);
+        }
+
         return {
           mainCategoryId: intentCategoryId || reviewCategory.id,
           mainCategoryName: intentCategory?.name || reviewCategory.name,
@@ -444,6 +466,7 @@ export async function classifyVoiceMessage(
             ? subsForIntent.find(s => s.id === intentSubCategoryId)?.name || UNDEFINED_LABEL
             : UNDEFINED_LABEL,
           productName: ctx.singleProduct ? UNDEFINED_LABEL : intent.product || UNDEFINED_LABEL,
+          cityId: intentCityId, // Preserve the city from the intent
           rawAiResponse: voiceResult.raw,
           inferredByAi: true,
         };

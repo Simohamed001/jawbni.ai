@@ -12,6 +12,7 @@ export type ClassificationLike = {
   rawAiResponse: string | null;
   mainCategoryName: string;
   subCategoryName: string;
+  cityId: string | null;
   inferredByAi?: boolean;
   additionalIntents?: ClassificationLike[];
 };
@@ -216,7 +217,8 @@ export async function detectAdditionalClassifications(
           (entry) =>
             entry.mainCategoryId === mainCategoryId &&
             entry.subCategoryId === subCategoryId &&
-            entry.productName === productName,
+            entry.productName === productName &&
+            entry.cityId === null, // Since additional classifier doesn't handle cities
         )
       ) {
         continue;
@@ -226,6 +228,7 @@ export async function detectAdditionalClassifications(
         mainCategoryId,
         subCategoryId,
         productName,
+        cityId: null, // Additional classifier doesn't handle cities
         rawAiResponse: raw,
         mainCategoryName: category.name,
         subCategoryName: subCategoryId
