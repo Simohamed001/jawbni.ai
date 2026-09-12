@@ -3,14 +3,14 @@ import {
   GenerativeModel,
 } from "@google/generative-ai";
 
-// نماذج Gemini 3 فقط (مجانية) — التصنيف والنص
+// نماذج Gemini 3 المجانية — التصنيف والنص
 const GEMINI_MODELS = [
   "gemini-3.5-flash",
   "gemini-3.5-flash-lite",
   "gemini-3.1-flash-lite",
 ];
 
-// نفس نماذج Gemini 3 تُستخدم للصوت أيضاً (بدون gemini 2.x)
+// نفس نماذج Gemini 3 تُستخدم للصوت أيضاً
 const AUDIO_FALLBACK_MODELS = [
   "gemini-3.5-flash",
   "gemini-3.5-flash-lite",
@@ -29,9 +29,10 @@ function getApiKey(): string {
   const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY;
   if (!key || key === "YOUR_GEMINI_API_KEY_HERE" || key.trim() === "") {
     throw new Error(
-      "GEMINI_API_KEY is not set. Add it to the Replit Secrets.",
+      "GEMINI_API_KEY is not set. Add it to your environment variables.",
     );
   }
+  console.log("[Gemini] API Key is configured");
   return key;
 }
 
@@ -84,12 +85,17 @@ export function getGeminiClient(
 
   const config: {
     model: string;
-    generationConfig?: { responseMimeType: string };
+    generationConfig?: { responseMimeType?: string; temperature: number };
   } = { model };
 
   if (jsonOutput) {
     config.generationConfig = {
       responseMimeType: "application/json",
+      temperature: 0.1,
+    };
+  } else {
+    config.generationConfig = {
+      temperature: 0.1,
     };
   }
 
@@ -120,17 +126,25 @@ export async function generateTextContent(
 ) {
   let lastError: unknown;
 
+  console.log(`[Gemini] Attempting to generate content with ${jsonOutput ? 'JSON' : 'text'} output`);
+  console.log(`[Gemini] Available models: ${getTextModelCandidates().join(', ')}`);
+
   for (const modelName of getTextModelCandidates()) {
     try {
+      console.log(`[Gemini] Trying model: ${modelName}`);
       const model = getGeminiClient(modelName, jsonOutput);
       recordRequest(modelName);
-      return await model.generateContent(prompt);
+      const result = await model.generateContent(prompt);
+      console.log(`[Gemini] Successfully generated content using ${modelName}`);
+      return result;
     } catch (error) {
       lastError = error;
-      console.warn(`[Gemini] Model ${modelName} failed; trying the next model`);
+      console.error(`[Gemini] Model ${modelName} failed with error:`, error);
+      console.warn(`[Gemini] Trying the next model...`);
     }
   }
 
+  console.error(`[Gemini] All models failed. Last error:`, lastError);
   throw lastError instanceof Error
     ? lastError
     : new Error("All Gemini text models failed");

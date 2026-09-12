@@ -14,6 +14,7 @@ import { saveAudioFile } from "@/lib/audio";
 import { UNDEFINED_LABEL } from "@/lib/utils";
 import {
   detectAdditionalClassifications,
+  type ClassificationLike,
 } from "@/lib/ai/additional-classifier";
 
 export async function GET(request: NextRequest) {
@@ -183,8 +184,26 @@ export async function POST(request: NextRequest) {
     const additionalClassifications = await detectAdditionalClassifications(
       merchantId,
       messageType === "voice" ? transcription || body : body,
-      classification,
+      classification as ClassificationLike,
     );
+
+    // Use the additional intents from the main classifier or the additional classifier
+    // detectAdditionalClassifications already returns the main classifier's additionalIntents if they exist
+    let allAdditionalIntents = additionalClassifications;
+
+    // Deduplication validation: remove duplicate intents based on mainCategory, subCategory, and productName
+    if (allAdditionalIntents.length > 0) {
+      const seen = new Set<string>();
+      allAdditionalIntents = allAdditionalIntents.filter(intent => {
+        const key = `${intent.mainCategoryId}-${intent.subCategoryId}-${intent.productName}`;
+        if (seen.has(key)) {
+          console.log(`[API] Removed duplicate intent: ${intent.mainCategoryName}/${intent.subCategoryName}/${intent.productName}`);
+          return false;
+        }
+        seen.add(key);
+        return true;
+      });
+    }
 
     const message = await prisma.message.create({
       data: {
@@ -197,8 +216,8 @@ export async function POST(request: NextRequest) {
         transcription,
         source,
         status: "classified",
-        additionalClassifications: additionalClassifications.length
-          ? JSON.stringify(additionalClassifications)
+        additionalClassifications: allAdditionalIntents.length
+          ? JSON.stringify(allAdditionalIntents)
           : null,
         classification: {
           create: {

@@ -7,7 +7,7 @@ import {
 import { classifyMessage, classifyVoiceMessage } from "@/lib/ai/classifier";
 import { getFullAudioPath } from "@/lib/audio";
 import { existsSync } from "fs";
-import { detectAdditionalClassifications } from "@/lib/ai/additional-classifier";
+import { detectAdditionalClassifications, type ClassificationLike } from "@/lib/ai/additional-classifier";
 
 export async function POST(
   _request: Request,
@@ -57,8 +57,26 @@ export async function POST(
     const additionalClassifications = await detectAdditionalClassifications(
       merchantId,
       transcription || message.body,
-      result,
+      result as ClassificationLike,
     );
+
+    // Use the additional intents from the main classifier or the additional classifier
+    // detectAdditionalClassifications already returns the main classifier's additionalIntents if they exist
+    let allAdditionalIntents = additionalClassifications;
+
+    // Deduplication validation: remove duplicate intents based on mainCategory, subCategory, and productName
+    if (allAdditionalIntents.length > 0) {
+      const seen = new Set<string>();
+      allAdditionalIntents = allAdditionalIntents.filter(intent => {
+        const key = `${intent.mainCategoryId}-${intent.subCategoryId}-${intent.productName}`;
+        if (seen.has(key)) {
+          console.log(`[API] Removed duplicate intent: ${intent.mainCategoryName}/${intent.subCategoryName}/${intent.productName}`);
+          return false;
+        }
+        seen.add(key);
+        return true;
+      });
+    }
 
     const updated = await prisma.message.update({
       where: { id },
@@ -66,8 +84,8 @@ export async function POST(
         status: "classified",
         // لا نمسح ربطاً يدوياً موجوداً — نحدّث المدينة فقط إذا تعرف عليها Gemini
         ...(result.cityId ? { cityId: result.cityId } : {}),
-        additionalClassifications: additionalClassifications.length
-          ? JSON.stringify(additionalClassifications)
+        additionalClassifications: allAdditionalIntents.length
+          ? JSON.stringify(allAdditionalIntents)
           : null,
         ...(transcription
           ? { transcription, body: transcription }
@@ -125,8 +143,28 @@ export async function PATCH(
     const additionalClassifications = await detectAdditionalClassifications(
       merchantId,
       body,
-      result,
+      result as ClassificationLike,
     );
+
+    // Use the additional intents from the main classifier or the additional classifier
+    // detectAdditionalClassifications already returns the main classifier's
+    // additionalIntents when they exist — combining both here would duplicate them
+    let allAdditionalIntents = additionalClassifications;
+
+    // Deduplication validation: remove duplicate intents based on mainCategory, subCategory, and productName
+    // (same rule as POST /api/messages)
+    if (allAdditionalIntents.length > 0) {
+      const seen = new Set<string>();
+      allAdditionalIntents = allAdditionalIntents.filter(intent => {
+        const key = `${intent.mainCategoryId}-${intent.subCategoryId}-${intent.productName}`;
+        if (seen.has(key)) {
+          console.log(`[API] Removed duplicate intent: ${intent.mainCategoryName}/${intent.subCategoryName}/${intent.productName}`);
+          return false;
+        }
+        seen.add(key);
+        return true;
+      });
+    }
 
     const updated = await prisma.message.update({
       where: { id },
@@ -135,8 +173,8 @@ export async function PATCH(
         ...(result.cityId ? { cityId: result.cityId } : {}),
         transcription,
         body: transcription || "🎤 رسالة صوتية",
-        additionalClassifications: additionalClassifications.length
-          ? JSON.stringify(additionalClassifications)
+        additionalClassifications: allAdditionalIntents.length
+          ? JSON.stringify(allAdditionalIntents)
           : null,
         classification: {
           upsert: {

@@ -83,7 +83,7 @@ export function MessageList({
                   )}
                 </div>
               )}
-              {msg.additionalClassifications?.map((classification, index) => (
+              {msg.additionalClassifications && msg.additionalClassifications.length > 0 && msg.additionalClassifications.map((classification, index) => (
                 <div key={`${msg.id}-classification-${index}`} className="mt-1 text-xs text-gray-600">
                   <span className="font-semibold text-[#075E54]">{classification.mainCategoryName}</span>
                   {classification.subCategoryName && <span> / {classification.subCategoryName}</span>}
