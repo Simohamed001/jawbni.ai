@@ -1,6 +1,6 @@
 "use client";
 
-import { formatTime } from "@/lib/utils";
+import { formatIntentDisplay, formatTime } from "@/lib/utils";
 import { Mic } from "lucide-react";
 
 export interface MessageItem {
@@ -73,23 +73,26 @@ export function MessageList({
               {msg.classification && (
                 <div className="mt-2 border-t border-gray-100 pt-2 text-xs text-gray-600">
                   <span className="font-semibold text-[#075E54]">
-                    {msg.classification.mainCategory.name}
+                    {formatIntentDisplay([
+                      msg.classification.mainCategory.name,
+                      msg.classification.subCategory?.name,
+                      msg.classification.productName,
+                    ])}
                   </span>
-                  {msg.classification.subCategory?.name && (
-                    <span> / {msg.classification.subCategory.name}</span>
-                  )}
-                  {msg.classification.productName && (
-                    <span> / {msg.classification.productName}</span>
-                  )}
                 </div>
               )}
-              {msg.additionalClassifications && msg.additionalClassifications.length > 0 && msg.additionalClassifications.map((classification, index) => (
-                <div key={`${msg.id}-classification-${index}`} className="mt-1 text-xs text-gray-600">
-                  <span className="font-semibold text-[#075E54]">{classification.mainCategoryName}</span>
-                  {classification.subCategoryName && <span> / {classification.subCategoryName}</span>}
-                  {classification.productName && <span> / {classification.productName}</span>}
-                </div>
-              ))}
+              {msg.additionalClassifications && msg.additionalClassifications.length > 0 && msg.additionalClassifications.map((classification, index) => {
+                const display = formatIntentDisplay([
+                  classification.mainCategoryName,
+                  classification.subCategoryName,
+                  classification.productName,
+                ]);
+                return display ? (
+                  <div key={`${msg.id}-classification-${index}`} className="mt-1 text-xs text-gray-600">
+                    <span className="font-semibold text-[#075E54]">{display}</span>
+                  </div>
+                ) : null;
+              })}
               <div className="mt-1 flex justify-end">
                 <span className="text-[10px] text-gray-500 uppercase">
                   {formatTime(msg.receivedAt)}
