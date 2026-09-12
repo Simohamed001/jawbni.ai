@@ -12,7 +12,9 @@ export type ClassificationLike = {
   rawAiResponse: string | null;
   mainCategoryName: string;
   subCategoryName: string;
+  cityId: string | null;
   inferredByAi?: boolean;
+  additionalIntents?: ClassificationLike[];
 };
 
 type CategoryContext = {
@@ -124,12 +126,18 @@ ${productCatalog}
 /**
  * يترك قرار تعدد التصنيف لنموذج الذكاء الاصطناعي، مع التحقق من أن كل نتيجة
  * تطابق قسمًا أو منتجًا موجودًا لدى التاجر قبل حفظها.
+ * ملاحظة: مع النظام الجديد للتصنيف المتعدد، هذه الدالة تعمل كاحتياطي أو للتصنيفات الإضافية اليدوية.
  */
 export async function detectAdditionalClassifications(
   merchantId: string,
   text: string,
   primary: ClassificationLike,
 ) {
+  // If primary already has additional intents from the main classifier, return them
+  if (primary.additionalIntents && primary.additionalIntents.length > 0) {
+    return primary.additionalIntents;
+  }
+
   if (!text.trim() || text.trim() === "🎤 رسالة صوتية") return [];
 
   const [categories, rawProducts] = await Promise.all([
@@ -209,7 +217,8 @@ export async function detectAdditionalClassifications(
           (entry) =>
             entry.mainCategoryId === mainCategoryId &&
             entry.subCategoryId === subCategoryId &&
-            entry.productName === productName,
+            entry.productName === productName &&
+            entry.cityId === null, // Since additional classifier doesn't handle cities
         )
       ) {
         continue;
@@ -219,6 +228,7 @@ export async function detectAdditionalClassifications(
         mainCategoryId,
         subCategoryId,
         productName,
+        cityId: null, // Additional classifier doesn't handle cities
         rawAiResponse: raw,
         mainCategoryName: category.name,
         subCategoryName: subCategoryId
