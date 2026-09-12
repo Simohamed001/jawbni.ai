@@ -31,6 +31,19 @@ export function keywordsToString(keywords: string[] | string): string {
 
 export const UNDEFINED_LABEL = "غير محدد";
 
+/**
+ * عرض موحّد لمكوّنات التصنيف (القسم الرئيسي / الفرعي / المنتج / المدينة...).
+ * طبقة عرض فقط: تخفي قيمة UNDEFINED_LABEL من الواجهة دون أي تغيير في البيانات،
+ * وتدمج الفواصل بشكل نظيف فلا تظهر "//" أو فواصل أو مسافات زائدة.
+ */
+export function formatIntentDisplay(
+  parts: Array<string | null | undefined>,
+): string {
+  return parts
+    .filter((part): part is string => Boolean(part) && part !== UNDEFINED_LABEL)
+    .join(" / ");
+}
+
 export const REVIEW_CATEGORY_NAME = "رسائل تحتاج مراجعة";
 
 export const DEFAULT_MAIN_CATEGORIES = [
