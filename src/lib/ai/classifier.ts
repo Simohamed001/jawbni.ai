@@ -252,34 +252,13 @@ export async function classifyMessage(merchantId: string, messageText: string): 
   }
 
   // Add additional intents to the result, preserving their delivery cities
-  const additionalIntents = parsed.intents.slice(1).map(intent => {
-    const intentCategoryId = matchCategoryId(intent.mainCategory, ctx.mainCategories);
-    const intentCategory = ctx.mainCategories.find(c => c.id === intentCategoryId);
-    const subsForIntent = intentCategory ? ctx.subCategories.filter(s => s.mainCategoryId === intentCategoryId) : [];
-    let intentSubCategoryId: string | null = null;
-    if (intent.subCategory !== UNDEFINED_LABEL) {
-      intentSubCategoryId = matchCategoryId(intent.subCategory, subsForIntent);
-    }
-
-    // Preserve the delivery city from the intent if it's specified
-    let intentCityId: string | null = null;
-    if (intent.deliveryCity && intent.deliveryCity !== UNDEFINED_LABEL) {
-      intentCityId = matchCityId(intent.deliveryCity, ctx.deliveryCities);
-    }
-
-    return {
-      mainCategoryId: intentCategoryId || reviewCategory.id,
-      mainCategoryName: intentCategory?.name || reviewCategory.name,
-      subCategoryId: intentSubCategoryId,
-      subCategoryName: intentSubCategoryId
-        ? subsForIntent.find(s => s.id === intentSubCategoryId)?.name || UNDEFINED_LABEL
-        : UNDEFINED_LABEL,
-      productName: ctx.singleProduct ? UNDEFINED_LABEL : intent.product || UNDEFINED_LABEL,
-      cityId: intentCityId, // Preserve the city from the intent
-      rawAiResponse,
-      inferredByAi: true,
-    };
-  });
+  const additionalIntents = await buildAdditionalIntents(
+    merchantId,
+    ctx,
+    reviewCategory,
+    parsed.intents.slice(1),
+    rawAiResponse,
+  );
 
   // Include additional intents in the result
   result = { ...result, additionalIntents } as any;
@@ -329,6 +308,52 @@ async function applyShippingCitySubCategory<
   });
 
   return { ...result, subCategoryId: subCategory.id, subCategoryName: subCategory.name };
+}
+
+// بناء النوايا الإضافية مع تطبيق قسم المدينة الفرعي على كل نية شحن والتوصيل،
+// ليظهر في شجرة التصنيفات تحت المدينة المشار إليها بدل "غير محدد"
+async function buildAdditionalIntents(
+  merchantId: string,
+  ctx: MerchantContext,
+  reviewCategory: { id: string; name: string },
+  intents: Array<{ mainCategory: string; subCategory: string; product: string; deliveryCity: string }>,
+  rawAiResponse: string | null,
+) {
+  const additionalIntents = [];
+  for (const intent of intents) {
+    const intentCategoryId = matchCategoryId(intent.mainCategory, ctx.mainCategories);
+    const intentCategory = ctx.mainCategories.find(c => c.id === intentCategoryId);
+    const subsForIntent = intentCategory ? ctx.subCategories.filter(s => s.mainCategoryId === intentCategoryId) : [];
+    let intentSubCategoryId: string | null = null;
+    if (intent.subCategory !== UNDEFINED_LABEL) {
+      intentSubCategoryId = matchCategoryId(intent.subCategory, subsForIntent);
+    }
+
+    // Preserve the delivery city from the intent if it's specified
+    let intentCityId: string | null = null;
+    if (intent.deliveryCity && intent.deliveryCity !== UNDEFINED_LABEL) {
+      intentCityId = matchCityId(intent.deliveryCity, ctx.deliveryCities);
+    }
+
+    const mapped = {
+      mainCategoryId: intentCategoryId || reviewCategory.id,
+      mainCategoryName: intentCategory?.name || reviewCategory.name,
+      subCategoryId: intentSubCategoryId,
+      subCategoryName: intentSubCategoryId
+        ? subsForIntent.find(s => s.id === intentSubCategoryId)?.name || UNDEFINED_LABEL
+        : UNDEFINED_LABEL,
+      productName: ctx.singleProduct ? UNDEFINED_LABEL : intent.product || UNDEFINED_LABEL,
+      cityId: intentCityId, // Preserve the city from the intent
+      rawAiResponse,
+      inferredByAi: true,
+    };
+
+    // نية شحن وتوصيل مع مدينة => المدينة هي القسم الفرعي الفعلي
+    additionalIntents.push(
+      await applyShippingCitySubCategory(merchantId, ctx, mapped),
+    );
+  }
+  return additionalIntents;
 }
 
 function mapParsedClassification(
@@ -443,34 +468,13 @@ export async function classifyVoiceMessage(
       });
 
       // Add additional intents to the classification, preserving their delivery cities
-      const additionalIntents = parsed.intents.slice(1).map(intent => {
-        const intentCategoryId = matchCategoryId(intent.mainCategory, ctx.mainCategories);
-        const intentCategory = ctx.mainCategories.find(c => c.id === intentCategoryId);
-        const subsForIntent = intentCategory ? ctx.subCategories.filter(s => s.mainCategoryId === intentCategoryId) : [];
-        let intentSubCategoryId: string | null = null;
-        if (intent.subCategory !== UNDEFINED_LABEL) {
-          intentSubCategoryId = matchCategoryId(intent.subCategory, subsForIntent);
-        }
-
-        // Preserve the delivery city from the intent if it's specified
-        let intentCityId: string | null = null;
-        if (intent.deliveryCity && intent.deliveryCity !== UNDEFINED_LABEL) {
-          intentCityId = matchCityId(intent.deliveryCity, ctx.deliveryCities);
-        }
-
-        return {
-          mainCategoryId: intentCategoryId || reviewCategory.id,
-          mainCategoryName: intentCategory?.name || reviewCategory.name,
-          subCategoryId: intentSubCategoryId,
-          subCategoryName: intentSubCategoryId
-            ? subsForIntent.find(s => s.id === intentSubCategoryId)?.name || UNDEFINED_LABEL
-            : UNDEFINED_LABEL,
-          productName: ctx.singleProduct ? UNDEFINED_LABEL : intent.product || UNDEFINED_LABEL,
-          cityId: intentCityId, // Preserve the city from the intent
-          rawAiResponse: voiceResult.raw,
-          inferredByAi: true,
-        };
-      });
+      const additionalIntents = await buildAdditionalIntents(
+        merchantId,
+        ctx,
+        reviewCategory,
+        parsed.intents.slice(1),
+        voiceResult.raw,
+      );
 
       classificationCache.set(parsedTranscription, merchantId, { ...classification, additionalIntents } as any);
       audioCache.set(audioFilePath, merchantId, parsedTranscription, { ...classification, additionalIntents } as any);

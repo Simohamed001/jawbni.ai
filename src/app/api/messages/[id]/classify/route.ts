@@ -146,11 +146,25 @@ export async function PATCH(
       result as ClassificationLike,
     );
 
-    // Combine the additional intents from the main classifier with any from the additional classifier
-    const allAdditionalIntents = [
-      ...((result as any).additionalIntents || []),
-      ...additionalClassifications
-    ];
+    // Use the additional intents from the main classifier or the additional classifier
+    // detectAdditionalClassifications already returns the main classifier's
+    // additionalIntents when they exist — combining both here would duplicate them
+    let allAdditionalIntents = additionalClassifications;
+
+    // Deduplication validation: remove duplicate intents based on mainCategory, subCategory, and productName
+    // (same rule as POST /api/messages)
+    if (allAdditionalIntents.length > 0) {
+      const seen = new Set<string>();
+      allAdditionalIntents = allAdditionalIntents.filter(intent => {
+        const key = `${intent.mainCategoryId}-${intent.subCategoryId}-${intent.productName}`;
+        if (seen.has(key)) {
+          console.log(`[API] Removed duplicate intent: ${intent.mainCategoryName}/${intent.subCategoryName}/${intent.productName}`);
+          return false;
+        }
+        seen.add(key);
+        return true;
+      });
+    }
 
     const updated = await prisma.message.update({
       where: { id },
