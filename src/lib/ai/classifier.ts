@@ -342,7 +342,7 @@ async function buildAdditionalIntents(
       subCategoryName: intentSubCategoryId
         ? subsForIntent.find(s => s.id === intentSubCategoryId)?.name || UNDEFINED_LABEL
         : UNDEFINED_LABEL,
-      productName: ctx.singleProduct ? UNDEFINED_LABEL : intent.product || UNDEFINED_LABEL,
+      productName: resolveProductName(intent.product, ctx, intentCategoryId || reviewCategory.id),
       cityId: intentCityId, // Preserve the city from the intent
       rawAiResponse,
       inferredByAi: true,
@@ -354,6 +354,43 @@ async function buildAdditionalIntents(
     );
   }
   return additionalIntents;
+}
+
+// قاعدة تحديد المنتج حسب وضع التاجر:
+// - عدة منتجات: يُقبل ناتج Gemini كما هو (الدليل داخل الرسالة شرط في البرومبت).
+// - المنتج الواحد: يُقبل المنتج الوحيد المسجل (اسمه أو كلماته المفتاحية) فقط؛
+//   وإذا لم يحدد Gemini منتجاً، تُسند الرسائل المرتبطة بالمنتج (أسئلة، تأكيد،
+//   شكاوى، مرتجعات...) إلى المنتج الوحيد، بينما تبقى رسائل الشحن والتوصيل
+//   ورسائل المراجعة والمنتجات غير المسجلة على "غير محدد".
+function resolveProductName(
+  value: string | null | undefined,
+  ctx: MerchantContext,
+  mainCategoryId: string,
+): string {
+  if (!ctx.singleProduct) {
+    return value || UNDEFINED_LABEL;
+  }
+  const single = ctx.products[0];
+  if (!single) return value || UNDEFINED_LABEL;
+
+  const trimmed = (value || "").trim();
+  if (trimmed && trimmed !== UNDEFINED_LABEL) {
+    const lower = trimmed.toLowerCase();
+    const matches =
+      single.officialName.trim().toLowerCase() === lower ||
+      single.keywords.some((k) => k.trim().toLowerCase() === lower);
+    return matches ? single.officialName : UNDEFINED_LABEL;
+  }
+
+  const mainCategory = ctx.mainCategories.find((c) => c.id === mainCategoryId);
+  if (
+    !mainCategory ||
+    mainCategory.name === SHIPPING_CATEGORY_NAME ||
+    mainCategory.name === ctx.reviewCategoryName
+  ) {
+    return UNDEFINED_LABEL;
+  }
+  return single.officialName;
 }
 
 function mapParsedClassification(
@@ -385,7 +422,7 @@ function mapParsedClassification(
   return {
     mainCategoryId,
     subCategoryId,
-    productName: ctx.singleProduct ? UNDEFINED_LABEL : parsed.product || UNDEFINED_LABEL,
+    productName: resolveProductName(parsed.product, ctx, mainCategoryId),
     rawAiResponse,
     mainCategoryName: mainCategory?.name ?? reviewCategory.name,
     subCategoryName: subCategoryId
