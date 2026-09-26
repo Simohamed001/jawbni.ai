@@ -10,6 +10,7 @@ import {
   type MerchantContext,
 } from "@/lib/ai/prompt";
 import { UNDEFINED_LABEL } from "@/lib/utils";
+import { validateIntentSemantics } from "@/lib/ai/intent-validation";
 import {
   generateTextContent,
 } from "@/lib/ai/gemini-rotation";
@@ -203,6 +204,21 @@ export async function classifyMessage(merchantId: string, messageText: string): 
       console.log(
         "[Text Classification] Keeping the review category because AI classification failed",
       );
+    }
+
+    // التحقق الدلالي من النوايا (قواعد المنتج غير المسجل): إذا اعتمدت نية الشراء على منتج
+    // غير مسجل تتحول إلى مراجعة، ولا تبقى نية شحن مستخرجة من نفس سياق الطلب.
+    // يجب أن يسبق buildAdditionalIntents وإلا أعيد إنشاء نية الشحن من ناتج Gemini الخام.
+    if (rawAiResponse !== null) {
+      parsed = {
+        intents: validateIntentSemantics(
+          parsed.intents,
+          ctx,
+          messageText,
+          reviewCategory.name,
+        ),
+      };
+      console.log("[Text Classification] Intents after semantic validation:", parsed);
     }
 
     // Override: نصوّب ناتج AI فقط إذا كان التصنيف غير موجود أصلاً في قاعدة البيانات

@@ -322,3 +322,97 @@ test("singleProduct mode is left unchanged", () => {
   );
   assert.deepEqual(intents, original);
 });
+
+test("Test 1 — independent shipping question keeps shipping with city", () => {
+  const intents = validateIntentSemantics(
+    [
+      {
+        mainCategory: SHIPPING_CATEGORY,
+        subCategory: UNDEFINED_LABEL,
+        product: UNDEFINED_LABEL,
+        deliveryCity: "طنجة",
+      },
+    ],
+    ctx({ deliveryCities: [{ id: "city-tanger", name: "طنجة" }] }),
+    "x7al tawsil l tanga",
+    REVIEW,
+  );
+  assert.deepEqual(summary(intents), [
+    { main: SHIPPING_CATEGORY, sub: UNDEFINED_LABEL, product: UNDEFINED_LABEL, city: "طنجة" },
+  ]);
+});
+
+test("Test 2 — shipping first, unregistered purchase after it is review only", () => {
+  const intents = validateIntentSemantics(
+    [
+      {
+        mainCategory: SHIPPING_CATEGORY,
+        subCategory: UNDEFINED_LABEL,
+        product: UNDEFINED_LABEL,
+        deliveryCity: "مراكش",
+      },
+      {
+        mainCategory: REVIEW,
+        subCategory: UNDEFINED_LABEL,
+        product: UNDEFINED_LABEL,
+        deliveryCity: UNDEFINED_LABEL,
+      },
+    ],
+    ctx({ deliveryCities: [{ id: "city-marrakech", name: "مراكش" }] }),
+    "x7l twsil l marakech bghit 2 cremes",
+    REVIEW,
+  );
+  assert.deepEqual(summary(intents), [
+    { main: REVIEW, sub: UNDEFINED_LABEL, product: UNDEFINED_LABEL, city: UNDEFINED_LABEL },
+  ]);
+});
+
+test("Test 3 — two unregistered products plus shipping is review only", () => {
+  const intents = validateIntentSemantics(
+    [
+      {
+        mainCategory: REVIEW,
+        subCategory: UNDEFINED_LABEL,
+        product: UNDEFINED_LABEL,
+        deliveryCity: UNDEFINED_LABEL,
+      },
+      {
+        mainCategory: SHIPPING_CATEGORY,
+        subCategory: UNDEFINED_LABEL,
+        product: UNDEFINED_LABEL,
+        deliveryCity: "طنجة",
+      },
+    ],
+    ctx({ deliveryCities: [{ id: "city-tanger", name: "طنجة" }] }),
+    "bghit wahd mairi o 2 tricoyat x7l twsil l tanga",
+    REVIEW,
+  );
+  assert.deepEqual(summary(intents), [
+    { main: REVIEW, sub: UNDEFINED_LABEL, product: UNDEFINED_LABEL, city: UNDEFINED_LABEL },
+  ]);
+});
+
+test("Test 4 — review primary plus Gemini shipping intent drops the shipping", () => {
+  const intents = validateIntentSemantics(
+    [
+      {
+        mainCategory: REVIEW,
+        subCategory: UNDEFINED_LABEL,
+        product: UNDEFINED_LABEL,
+        deliveryCity: UNDEFINED_LABEL,
+      },
+      {
+        mainCategory: SHIPPING_CATEGORY,
+        subCategory: UNDEFINED_LABEL,
+        product: UNDEFINED_LABEL,
+        deliveryCity: "أكادير",
+      },
+    ],
+    ctx(),
+    "bghit 2 mn mairi o wahd trico w x7l twsil l agadir",
+    REVIEW,
+  );
+  assert.deepEqual(summary(intents), [
+    { main: REVIEW, sub: UNDEFINED_LABEL, product: UNDEFINED_LABEL, city: UNDEFINED_LABEL },
+  ]);
+});
