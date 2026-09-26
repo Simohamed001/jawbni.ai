@@ -2,7 +2,6 @@ import { prisma } from "@/lib/prisma";
 import { getReviewCategory } from "@/lib/categories";
 import {
   buildSystemPrompt,
-  buildVoiceSystemPrompt,
   classificationSchema,
   matchCategoryId,
   matchCityId,
@@ -14,13 +13,13 @@ import { UNDEFINED_LABEL } from "@/lib/utils";
 import {
   generateTextContent,
 } from "@/lib/ai/gemini-rotation";
-import { transcribeAudio, generateFromVoicePrompt } from "@/lib/ai/transcribe";
+import { transcribeAudio } from "@/lib/ai/transcribe";
 import { classificationCache, audioCache } from "@/lib/ai/cache";
 
 export { transcribeAudio };
 
 async function loadMerchantContext(merchantId: string): Promise<MerchantContext> {
-  const [mainCategories, subCategories, products, review, merchant, deliveryCities] =
+  const [mainCategories, subCategories, products, productMappings, review, merchant, deliveryCities] =
     await Promise.all([
     prisma.mainCategory.findMany({
       where: { merchantId },
@@ -41,6 +40,16 @@ async function loadMerchantContext(merchantId: string): Promise<MerchantContext>
       where: { merchantId, isSold: true },
       select: { officialName: true, keywords: true },
     }),
+    prisma.productCategoryMapping.findMany({
+      where: {
+        product: { merchantId, isSold: true },
+      },
+      select: {
+        productId: true,
+        mainCategoryId: true,
+        product: { select: { officialName: true } },
+      },
+    }),
     getReviewCategory(merchantId),
     prisma.merchantProfile.findUnique({
       where: { id: merchantId },
@@ -52,6 +61,15 @@ async function loadMerchantContext(merchantId: string): Promise<MerchantContext>
       orderBy: { name: "asc" },
     }),
   ]);
+
+  // Build a map of which products are allowed for each main category
+  const categoryProductsMap = new Map<string, Set<string>>();
+  for (const mapping of productMappings) {
+    if (!categoryProductsMap.has(mapping.mainCategoryId)) {
+      categoryProductsMap.set(mapping.mainCategoryId, new Set());
+    }
+    categoryProductsMap.get(mapping.mainCategoryId)!.add(mapping.productId);
+  }
 
   return {
     mainCategories,
@@ -65,6 +83,7 @@ async function loadMerchantContext(merchantId: string): Promise<MerchantContext>
       officialName: p.officialName,
       keywords: JSON.parse(p.keywords || "[]") as string[],
     })),
+    categoryProductsMap,
     reviewCategoryName: review.name,
     singleProduct: merchant?.singleProduct || false,
     deliveryCities,
@@ -357,7 +376,7 @@ async function buildAdditionalIntents(
 }
 
 // قاعدة تحديد المنتج حسب وضع التاجر:
-// - عدة منتجات: يُقبل ناتج Gemini كما هو (الدليل داخل الرسالة شرط في البرومبت).
+// - عدة منتجات: يُقبل ناتج Gemini فقط إذا كان المنتج مرتبط بالقسم المختار، وإلا "غير محدد"
 // - المنتج الواحد: يُقبل المنتج الوحيد المسجل (اسمه أو كلماته المفتاحية) فقط؛
 //   وإذا لم يحدد Gemini منتجاً، تُسند الرسائل المرتبطة بالمنتج (أسئلة، تأكيد،
 //   شكاوى، مرتجعات...) إلى المنتج الوحيد، بينما تبقى رسائل الشحن والتوصيل
@@ -368,8 +387,41 @@ function resolveProductName(
   mainCategoryId: string,
 ): string {
   if (!ctx.singleProduct) {
-    return value || UNDEFINED_LABEL;
+    // Multi-product mode: validate that product is associated with the selected category
+    const trimmed = (value || "").trim();
+    if (!trimmed || trimmed === UNDEFINED_LABEL) {
+      return UNDEFINED_LABEL;
+    }
+
+    // Check if the product exists in the merchant's products
+    const product = ctx.products.find(p => p.officialName === trimmed);
+    if (!product) {
+      return UNDEFINED_LABEL;
+    }
+
+    // Check if this product is associated with the selected main category
+    const categoryProducts = ctx.categoryProductsMap.get(mainCategoryId);
+    if (!categoryProducts || categoryProducts.size === 0) {
+      // Category has no products associated - always return undefined
+      console.log(`[Product Validation] Category ${mainCategoryId} has no products, forcing product = غير محدد`);
+      return UNDEFINED_LABEL;
+    }
+
+    // Check if this specific product is allowed for this category
+    const isProductAllowed = Array.from(categoryProducts).some(productId => {
+      const allowedProduct = ctx.products.find(p => p.officialName === product.officialName);
+      return allowedProduct && ctx.products.indexOf(allowedProduct) !== -1;
+    });
+
+    if (!isProductAllowed) {
+      console.log(`[Product Validation] Product ${product.officialName} is not associated with category ${mainCategoryId}, forcing product = غير محدد`);
+      return UNDEFINED_LABEL;
+    }
+
+    return product.officialName;
   }
+
+  // Single-product mode
   const single = ctx.products[0];
   if (!single) return value || UNDEFINED_LABEL;
 
@@ -459,73 +511,8 @@ export async function classifyVoiceMessage(
     };
   }
 
-  const ctx = await loadMerchantContext(merchantId);
-  const reviewCategory = await getReviewCategory(merchantId);
-  const formattedProducts = formatProducts(ctx.products);
-  const citiesBlockText = citiesBlock(ctx);
-  const voicePrompt = buildVoiceSystemPrompt(ctx, formattedProducts, citiesBlockText);
-
-  console.log("[Voice Classification] Attempting direct Gemini voice classification");
-
-  // محاولة التصنيف الصوتي المباشر (Gemini يسمع ويصنّف في خطوة واحدة)
-  try {
-    const voiceResult = await generateFromVoicePrompt(audioFilePath, voicePrompt);
-    const json = voiceResult.json;
-    const transcription = json && typeof json.transcription === "string" ? json.transcription : null;
-    const parsedTranscription = transcription ? normalizeTranscriptForVoice(transcription) : null;
-
-    let parsed = null;
-    if (json && Array.isArray(json.intents) && json.intents.length > 0) {
-      parsed = {
-        intents: json.intents.map((intent: any) => ({
-          mainCategory:
-            typeof intent.mainCategory === "string" ? intent.mainCategory : reviewCategory.name,
-          subCategory:
-            typeof intent.subCategory === "string" ? intent.subCategory : UNDEFINED_LABEL,
-          product:
-            typeof intent.product === "string" ? intent.product : UNDEFINED_LABEL,
-          deliveryCity:
-            typeof intent.deliveryCity === "string" && intent.deliveryCity !== UNDEFINED_LABEL
-              ? intent.deliveryCity
-              : UNDEFINED_LABEL,
-        }))
-      };
-    }
-
-    if (parsed && parsedTranscription) {
-      console.log("[Voice Classification] Direct voice classification succeeded:", parsed);
-      const primaryIntent = parsed.intents[0];
-      const voiceCityId =
-        (primaryIntent.deliveryCity && primaryIntent.deliveryCity !== UNDEFINED_LABEL
-          ? matchCityId(primaryIntent.deliveryCity, ctx.deliveryCities)
-          : null) ?? findCityInText(parsedTranscription, ctx.deliveryCities);
-      const classification = await applyShippingCitySubCategory(merchantId, ctx, {
-        ...mapParsedClassification(primaryIntent, ctx, reviewCategory, voiceResult.raw),
-        cityId: voiceCityId,
-      });
-
-      // Add additional intents to the classification, preserving their delivery cities
-      const additionalIntents = await buildAdditionalIntents(
-        merchantId,
-        ctx,
-        reviewCategory,
-        parsed.intents.slice(1),
-        voiceResult.raw,
-      );
-
-      classificationCache.set(parsedTranscription, merchantId, { ...classification, additionalIntents } as any);
-      audioCache.set(audioFilePath, merchantId, parsedTranscription, { ...classification, additionalIntents } as any);
-      return {
-        transcription: parsedTranscription,
-        classification: { ...classification, additionalIntents } as any,
-      };
-    }
-  } catch (voiceError) {
-    console.error("[Voice Classification] Direct voice classification failed:", voiceError);
-  }
-
-  // Fallback: تصنيف عبر تفريغ صوتي ثم تصنيف نصي
-  console.log("[Voice Classification] Transcribing voice message with Gemini");
+  // Transcribe the audio to text ONLY
+  console.log("[Voice Classification] Transcribing voice message");
   const transcription = await transcribeAudio(audioFilePath);
   console.log("[Voice Classification] Transcription result:", {
     hasTranscription: !!transcription,
@@ -539,16 +526,16 @@ export async function classifyVoiceMessage(
     return { transcription: null, classification };
   }
 
-  // تصنيف النص المفرّغ (يستعمل cache تلقائياً)
-  console.log("[Voice Classification] Classifying transcribed text with Gemini");
+  // Classify the transcribed text using the normal text classification pipeline
+  console.log("[Voice Classification] Classifying transcribed text with normal text classifier");
   let classification = await classifyMessage(merchantId, transcription);
-  console.log("[Voice Classification] Gemini text classification result:", {
+  console.log("[Voice Classification] Text classification result:", {
     mainCategory: classification.mainCategoryName,
     subCategory: classification.subCategoryName,
     productName: classification.productName,
   });
 
-  // تخزين النتيجة الصوتية في cache
+  // Store the result in cache
   classificationCache.set(transcription, merchantId, classification);
   audioCache.set(audioFilePath, merchantId, transcription, classification);
 

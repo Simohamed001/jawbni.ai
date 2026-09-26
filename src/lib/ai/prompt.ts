@@ -33,6 +33,7 @@ export interface MerchantContext {
     mainCategoryName: string | null;
   }[];
   products: { officialName: string; keywords: string[] }[];
+  categoryProductsMap: Map<string, Set<string>>;
   deliveryCities: { id: string; name: string }[];
   reviewCategoryName: string;
   singleProduct: boolean;
@@ -46,6 +47,13 @@ export function citiesBlock(ctx: MerchantContext) {
 
 function classificationRules(ctx: MerchantContext, formattedProducts: string) {
   const subCategoriesList = ctx.subCategories.map((s) => s.name);
+
+  // Build a map of category names to their allowed products
+  const categoryProductsText = ctx.mainCategories.map(cat => {
+    const productIds = ctx.categoryProductsMap.get(cat.id);
+    const allowedProducts = ctx.products.filter(p => productIds?.has(p.officialName));
+    return `- ${cat.name}: ${allowedProducts.length > 0 ? allowedProducts.map(p => p.officialName).join(", ") : "لا توجد منتجات مرتبطة"}`;
+  }).join("\n");
 
   const productInstructions = ctx.singleProduct
     ? `
@@ -69,7 +77,12 @@ function classificationRules(ctx: MerchantContext, formattedProducts: string) {
 |- تنبيه حاسم: وجود كلمة مفتاحية وحده لا يكفي. الكلمة المفتاحية دليل محتمل وليست حكماً تلقائياً. اسأل نفسك: هل استُعملت هذه الكلمة في هذه الرسالة للإشارة فعلاً إلى المنتج المرتبط بها؟ إذا كان ظهورها عرضياً أو ضمن سياق آخر فلا تسند الرسالة إلى المنتج.
 |- إذا كان القسم الرئيسي واضحاً لكن لا دليل كافياً على منتج بعينه: صنف القسم الرئيسي كالمعتاد واجعل product = "غير محدد". مثال: "ch7al taman dyalo?" مع عدة منتجات = أسئلة عن المنتج / الثمن / غير محدد.
 |- لا تفترض أبداً أن منتجاً ذُكر في محادثة سابقة هو المقصود؛ الحكم يكون من مضمون هذه الرسالة وحدها.
-|- عند الشك: product = "غير محدد" بدل إسناد الرسالة إلى منتج غير مؤكد.`;
+|- عند الشك: product = "غير محدد" بدل إسناد الرسالة إلى منتج غير مؤكد.
+
+** قاعدة حاسمة - المنتجات حسب القسم:**
+${categoryProductsText}
+|- قاعدة إلزامية: إذا كان القسم الرئيسي المختار لا يحتوي على أي منتجات مرتبطة، فيجب أن يكون product = "غير محدد" دائماً، بغض النظر عن الكلمات المفتاحية أو السياق أو التخمين.
+|- لا يجوز إسناد منتج لقسم "الشكاوى أو المشاكل" إلا إذا كان الشكوى واضحة عن منتج محدد والمنتج مرتبط فعلياً بهذا القسم.`;
 
   return `أنت نظام تصنيف ذكي للمحادثات للتجار المغاربة، تفهم الدارجة المغربية بجميع صيغها (عربية، Franco، Arabizi) والفرنسية والعربية.
 

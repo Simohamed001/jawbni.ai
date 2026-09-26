@@ -33,9 +33,19 @@ export function extractJsonObject(text: string): Record<string, unknown> | null 
 }
 
 const TRANSCRIBE_PROMPT =
-  "Transcribe this audio message exactly as spoken. " +
+  "Transcribe this audio message EXACTLY as spoken, word for word. " +
   "The speaker is likely a Moroccan customer speaking in Darija " +
   "(Moroccan Arabic), French, or a mix including Franco/Arabizi. " +
+  "CRITICAL RULES: " +
+  "- Output ONLY the literal spoken words - no interpretation, no paraphrasing, no translation. " +
+  "- Do NOT rewrite the sentence into standard Arabic. " +
+  "- Do NOT infer missing words from context. " +
+  "- Do NOT insert product names or merchant context. " +
+  "- Do NOT perform any classification or intent analysis. " +
+  "- Do NOT use merchant product data to modify the transcription. " +
+  "- Preserve unclear Darija/Arabizi expressions exactly as spoken. " +
+  "- If a word is unclear, write it as you hear it, do not guess the intended meaning. " +
+  "- This is a transcription-only task - NO classification involved. " +
   "Output ONLY the transcribed text, nothing else.";
 
 async function generateFromInline(
