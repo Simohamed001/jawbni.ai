@@ -1,4 +1,4 @@
-import { UNDEFINED_LABEL, OTHER_QUESTIONS_SUBCATEGORY, PRODUCT_QUESTIONS_CATEGORY } from "@/lib/utils";
+import { UNDEFINED_LABEL } from "@/lib/utils";
 import type { MerchantContext } from "@/lib/ai/prompt";
 
 export const CONFIRMATION_CATEGORY = "التأكيد";
