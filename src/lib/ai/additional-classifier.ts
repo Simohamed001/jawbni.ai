@@ -15,6 +15,7 @@ export type ClassificationLike = {
   cityId: string | null;
   inferredByAi?: boolean;
   additionalIntents?: ClassificationLike[];
+  semanticsLocked?: boolean;
 };
 
 type CategoryContext = {
@@ -134,9 +135,10 @@ export async function detectAdditionalClassifications(
   text: string,
   primary: ClassificationLike,
 ) {
-  // If primary already has additional intents from the main classifier, return them
-  if (primary.additionalIntents && primary.additionalIntents.length > 0) {
-    return primary.additionalIntents;
+  // Semantic validation in the main classifier is the source of truth.
+  // Do not invent extra shipping/product intents after that decision.
+  if (primary.semanticsLocked || Array.isArray(primary.additionalIntents)) {
+    return primary.additionalIntents ?? [];
   }
 
   if (!text.trim() || text.trim() === "🎤 رسالة صوتية") return [];

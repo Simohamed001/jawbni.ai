@@ -46,6 +46,10 @@ export function formatIntentDisplay(
 
 export const REVIEW_CATEGORY_NAME = "رسائل تحتاج مراجعة";
 
+export const PRODUCT_QUESTIONS_CATEGORY = "أسئلة عن المنتج";
+
+export const OTHER_QUESTIONS_SUBCATEGORY = "أسئلة أخرى";
+
 export const DEFAULT_MAIN_CATEGORIES = [
   { name: "الشكاوى أو المشاكل", isSystem: false },
   { name: "أسئلة عن المنتج", isSystem: false },
@@ -55,7 +59,7 @@ export const DEFAULT_MAIN_CATEGORIES = [
 ];
 
 export const DEFAULT_SUB_CATEGORIES: Record<string, string[]> = {
-  "أسئلة عن المنتج": ["الثمن", "التوفر", "المواصفات"],
+  "أسئلة عن المنتج": ["الثمن", "التوفر", "المواصفات", "أسئلة أخرى"],
   "الشحن والتوصيل": ["مدة التوصيل", "تكلفة الشحن"],
   "الشكاوى أو المشاكل": ["منتج تالف", "تأخر التوصيل"],
 };
